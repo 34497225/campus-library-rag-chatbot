@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.py[cod]
+*.pkl
+.streamlit/secrets.toml
+.pytest_cache/
+
+DATA/
+data_test/
+.chroma/
+.venv/
