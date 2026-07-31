@@ -23,6 +23,10 @@ from langchain.vectorstores import FAISS
 BASE_DIR = Path(__file__).resolve().parent
 DEMO_LIBRARY_PATH = BASE_DIR / "knowledge_base" / "demo_library_faq.csv"
 
+MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
+MAX_DOCUMENT_CHUNKS = 100
+MAX_QUESTIONS_PER_SESSION = 10
+
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -54,6 +58,9 @@ TEXT = {
         "language": "Language / 語言",
         "demo_notice": "目前使用虛構的圖書館 FAQ 範例資料，適合專題展示。",
         "no_text": "文件中沒有可供搜尋的文字內容。",
+        "file_too_large": "檔案大小不可超過 {limit_mb} MB。",
+        "too_many_chunks": "文件切分後超過 {limit} 個區塊，請改用較小的文件。",
+        "question_limit": "本次工作階段已達 {limit} 題上限，請清除對話後再繼續。",
         "billing": "OpenAI API 帳戶目前未啟用或沒有可用額度，請檢查 Billing 與 Usage Limits。",
         "invalid_key": "OPENAI_API_KEY 無效，請檢查 .env 中的新金鑰。",
         "rate_limit": "OpenAI API 已達速率或額度限制，請稍後重試並檢查 Usage Limits。",
@@ -87,6 +94,9 @@ TEXT = {
         "language": "Language / 語言",
         "demo_notice": "This mode uses fictional library FAQ data for a project demonstration.",
         "no_text": "The document does not contain searchable text.",
+        "file_too_large": "The file size cannot exceed {limit_mb} MB.",
+        "too_many_chunks": "The document exceeds the limit of {limit} chunks. Please use a smaller file.",
+        "question_limit": "This session has reached the {limit}-question limit. Clear the conversation to continue.",
         "billing": "The OpenAI API account is inactive or has no available credit. Check Billing and Usage Limits.",
         "invalid_key": "OPENAI_API_KEY is invalid. Check the new key in .env.",
         "rate_limit": "The OpenAI API rate or usage limit was reached. Try again later and check Usage Limits.",
@@ -122,6 +132,16 @@ Latest question: {question}
 def t(language: str, key: str, **values: str) -> str:
     return TEXT[language][key].format(**values)
 
+def validate_file_size(file_size_bytes: int) -> None:
+    if file_size_bytes > MAX_FILE_SIZE_BYTES:
+        raise ValueError("file_too_large")
+
+def validate_chunk_count(chunk_count: int) -> None:
+    if chunk_count > MAX_DOCUMENT_CHUNKS:
+        raise ValueError("too_many_chunks")
+
+def has_reached_question_limit(question_count: int) -> bool:
+    return question_count >= MAX_QUESTIONS_PER_SESSION
 
 class DirectOpenAIEmbeddings(Embeddings):
     """Small adapter that avoids the legacy LangChain tokenizer download."""
@@ -193,6 +213,7 @@ def build_vector_store(documents: List[Document]) -> FAISS:
     chunks = splitter.split_documents(documents)
     if not chunks or not any(chunk.page_content.strip() for chunk in chunks):
         raise ValueError("no_text")
+    validate_chunk_count(len(chunks))
 
     model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     return FAISS.from_documents(chunks, DirectOpenAIEmbeddings(model=model))
@@ -301,13 +322,29 @@ def main() -> None:
             if uploaded_file is None:
                 st.info(t(language, "need_upload"))
                 return
+            validate_file_size(uploaded_file.size)
             file_digest = hashlib.sha256(uploaded_file.getvalue()).hexdigest()[:12]
             source_id = f"upload:{uploaded_file.name}:{file_digest}"
             with st.spinner(t(language, "loading")):
                 set_source(source_id, uploaded_file.name, load_uploaded_file(uploaded_file))
         st.success(t(language, "loaded", name=st.session_state.active_source_name))
     except Exception as error:
-        error_text = t(language, "no_text") if str(error) == "no_text" else friendly_error(error, language)
+        if str(error) == "no_text":
+            error_text = t(language, "no_text")
+        elif str(error) == "file_too_large":
+            error_text = t(
+                language,
+                "file_too_large",
+                limit_mb=MAX_FILE_SIZE_BYTES // 1024 // 1024,
+            )
+        elif str(error) == "too_many_chunks":
+            error_text = t(
+                language,
+                "too_many_chunks",
+                limit=MAX_DOCUMENT_CHUNKS,
+            )
+        else:
+            error_text = friendly_error(error, language)
         st.error(t(language, "processing_error", error=error_text))
         return
 
@@ -335,7 +372,22 @@ def main() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    if question := st.chat_input(t(language, "question")):
+    question_limit_reached = has_reached_question_limit(
+        st.session_state.question_count
+    )
+    if question_limit_reached:
+        st.warning(
+            t(
+                language,
+                "question_limit",
+                limit=MAX_QUESTIONS_PER_SESSION,
+            )
+        )
+    question = st.chat_input(
+        t(language, "question"),
+        disabled=question_limit_reached,
+    )
+    if question:
         st.session_state.messages.append({"role": "user", "content": question})
         with st.chat_message("user"):
             st.markdown(question)
