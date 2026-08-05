@@ -17,3 +17,9 @@ class Settings(BaseSettings):
             raise RuntimeError("DATABASE_URL is not configured.")
 
         return self.database_url
+
+    def require_direct_database_url(self) -> str:
+        if not self.direct_database_url:
+            raise RuntimeError("DIRECT_DATABASE_URL is not configured.")
+
+        return self.direct_database_url

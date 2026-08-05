@@ -1,94 +1,191 @@
 # 文件智能客服專案狀態
 
-最後更新：2026-08-04
+最後更新：2026-08-05
 
-## 使用方式
+## 1. 本檔案的用途
 
-這份檔案是專案的持續狀態紀錄。每個大階段開始前：
+這份檔案記錄專案目前的真實進度、重要技術決策與下一步工作，避免長期開發後失去方向。
+
+每個大階段開始前，Codex 必須：
 
 1. 先讀取本檔案。
-2. 用 `git status -sb`、`git branch --show-current` 與相關測試重新核對現況。
-3. 先向使用者整理「已完成、目前目標、本階段範圍、完成標準」。
-4. 每次只教一個可驗證的小步驟，並解釋目的、指令與預期結果。
-5. 每個可驗證段落完成後，由 Codex 自動更新本檔案；使用者不需要手動維護。
-6. 每個大階段開始前，由 Codex 自動讀取本檔案，再以 Git 狀態與測試結果核對。
+2. 用 Git 狀態、目前分支及測試結果重新核對現況。
+3. 先向使用者說明「已完成、目前目標、本階段範圍、完成標準」。
+4. 每次只教一個可驗證的小步驟，並詳細說明目的、指令內容與預期結果。
+5. 一個段落或大階段完成後，由 Codex 更新本檔案；使用者不需要手動維護。
 
-本檔案不能取代 Git、測試結果或雲端服務紀錄；若內容與實際狀態不同，以即時檢查結果為準並修正本檔案。
+本檔案不能取代 Git、測試或雲端服務紀錄。若內容與即時檢查不一致，以實際結果為準並修正本檔案。
 
-## 專案目標
+禁止把 API Key、資料庫連線字串、密碼或 JWT Secret 寫入本檔案。
 
-建立可用於專題展示與履歷的校園圖書館文件型 RAG 智能客服：
+## 2. 專案目標與架構
 
-- Streamlit 提供中英文介面與文件問答。
-- LangChain、FAISS 與 OpenAI API 負責 RAG。
-- FastAPI 提供帳號、JWT 驗證與個人對話 API。
-- Neon PostgreSQL 永久保存帳號與對話。
-- Streamlit Cloud 部署前端。
-- Render 部署 FastAPI。
-- GitHub Actions 執行前後端 CI。
-- Redis 限流留在主要功能完成後再做。
+目標是建立可用於專題展示與履歷的校園圖書館文件型 RAG 智能客服。
 
-## 已完成
+```text
+使用者
+  ↓
+Streamlit Cloud（雙語介面與 RAG）
+  ├─ LangChain + FAISS + OpenAI API
+  └─ FastAPI API（Render）
+       └─ Neon PostgreSQL
 
-### Streamlit 與 RAG
+GitHub
+  ├─ GitHub Actions：前後端 CI
+  ├─ Streamlit Cloud：前端自動部署
+  └─ Render：後端自動部署（後續階段）
+```
 
-- 範例圖書館 FAQ 與 PDF／CSV 上傳。
+第一版不使用 Docker；Redis 限流等功能等主要流程完成後再加入。
+
+## 3. 目前快照
+
+- 目前分支：`feature/add-database-foundation`
+- 分支起點：合併 FastAPI PR #4 的 `main` commit `6cd9f4a`
+- 本階段已推送的基礎 commit：`a46e3a8`
+- 目前大階段：Neon PostgreSQL 與 Alembic 資料庫基礎
+- 使用中的 Neon 分支：`development`
+- 目前 Alembic revision：`6e51fbe701b3 (head)`
+- `users` migration 已完成升級、降級及重新升級驗證
+
+目前尚未提交的預期檔案：
+
+```text
+PROJECT_STATE.md
+backend/config.py
+backend/tests/test_config.py
+backend/alembic.ini
+backend/alembic/
+backend/models.py
+backend/tests/test_models.py
+```
+
+下一個小步驟：暫存本階段檔案，檢查 staged diff 與機密掃描結果，確認無誤後建立資料庫基礎的第二個 commit。
+
+## 4. 已完成里程碑
+
+### 4.1 Streamlit 與 RAG
+
+- 範例圖書館 FAQ，以及 PDF／CSV 上傳問答。
 - 繁體中文／英文介面。
-- FAISS 檢索與 OpenAI 回答。
+- LangChain、FAISS 與 OpenAI 文件檢索問答。
 - 最近三組問答脈絡、清除對話、Markdown 匯出與使用統計。
-- 友善招呼與無答案提示。
-- 每個工作階段 10 題、檔案 5 MB、100 個區塊等公開展示限制。
-- 使用 `gpt-4o-mini` 與 `text-embedding-3-small`。
+- 自然招呼與友善的無答案提示。
+- 公開展示限制：每個工作階段 10 題、檔案 5 MB、最多 100 個區塊。
+- 模型使用 `gpt-4o-mini` 與 `text-embedding-3-small`。
 - Streamlit Cloud 公開網站已可使用。
-- GitHub 自動部署能力已連接，但端到端 CD 驗收留待下一次真正的前端功能變更。
+- Streamlit 已連接 GitHub 自動部署；完整前端 CD 驗收留待下一次真正的前端功能變更。
 
-### Git、GitHub 與安全
+### 4.2 Git、GitHub 與安全
 
 - GitHub 公開 Repository 已建立。
 - `.env`、虛擬環境、個人文件與舊資料不進 Git。
 - `main` 必須透過 Pull Request 更新。
 - 禁止刪除 `main` 與 force push。
-- Ruleset 必須通過 `CI / test` 與 `CI / backend-test`。
 - 已實際驗證直接推送 `main` 會被拒絕。
+- Required checks 包含 `CI / test` 與 `CI / backend-test`。
 
-### CI
+### 4.3 CI
 
 - 前端 job `test`：安裝根目錄依賴、檢查 `app.py`、執行 `tests/`。
 - 後端 job `backend-test`：安裝後端依賴、檢查後端語法、執行 `backend/tests/`。
-- 本機前端測試目前為 5 passed。
-- 本機後端測試目前為 8 passed，另有 FastAPI TestClient 的非阻斷棄用警告。
-- 後端測試包含 Health 1 個、Config 3 個與 Database Mock 4 個。
-- PR 與合併後的 `main` CI 都已通過。
+- 前端本機測試：5 passed。
+- 後端本機測試：13 passed。
+- FastAPI TestClient 目前有一個不阻斷測試的棄用警告。
+- PR 與合併後的 `main` CI 均已成功驗證。
 
-### FastAPI 基礎
+### 4.4 FastAPI 基礎
 
 - `backend/main.py` 已建立 FastAPI application。
-- `GET /health` 回傳 HTTP 200 與 `{\"status\": \"ok\"}`。
+- `GET /health` 回傳 HTTP 200 與 `{"status": "ok"}`。
 - Swagger `/docs` 與 Uvicorn 本機啟動已驗證。
-- 前端 `.venv` 與後端 `.venv-backend` 分離，避免 Pydantic 1／2 衝突。
-- FastAPI 基礎 PR #4 已合併，完成分支清理。
+- 前端 `.venv` 與後端 `.venv-backend` 分離，避免 Pydantic 1／2 相依衝突。
+- FastAPI 基礎已透過 PR #4 合併並完成分支清理。
 
-## 目前狀態
+### 4.5 資料庫基礎（目前階段已完成部分）
 
-- 預期目前分支：`feature/add-database-foundation`。
-- 分支起點：合併 PR #4 的 `main` commit `6cd9f4a`。
-- 目前大階段：資料庫基礎。
-- 已查詢並 dry-run 驗證以下版本可由 pip 解析：
+#### 套件與設定
+
+- 已固定並安裝：
   - `SQLAlchemy==2.0.51`
   - `psycopg[binary]==3.3.4`
   - `alembic==1.18.5`
   - `pydantic-settings==2.14.2`
-- 上述四個固定版本已寫入 `backend/requirements.txt` 並安裝至 `.venv-backend`。
-- `pip check` 已通過，實際匯入版本與鎖定版本一致。
-- `backend/config.py` 已建立，集中管理 `DATABASE_URL` 與 `DIRECT_DATABASE_URL`。
-- 設定模組允許應用程式在未設定資料庫網址時匯入；實際需要連線時才產生清楚錯誤。
-- `backend/database.py` 已建立 SQLAlchemy Base、延遲建立的 Engine、Session Factory 與 FastAPI Session Dependency。
-- Engine 啟用 `pool_pre_ping=True`，Session 使用完畢後會在 `finally` 中關閉。
-- Config 測試 3 個與 Database Mock 測試 4 個均已通過，全程沒有連接真正的 Neon。
-- 本機後端測試總計為 8 passed。
-- 下一個小步驟是建立 Neon PostgreSQL 專案與開發資料庫，目前仍未使用真實資料庫連線。
+- `pip check` 已通過。
+- `backend/config.py` 集中讀取資料庫環境變數。
+- `backend/database.py` 提供 SQLAlchemy Base、engine、session factory 與 FastAPI session dependency。
+- Engine 採延遲建立並使用 `pool_pre_ping=True`。
+- Session dependency 會在使用完畢後關閉連線。
+- 設定與資料庫行為測試已建立，不連正式 Neon。
 
-## 目前架構決策
+#### Neon
+
+- Neon 專案：`campus-library-rag-chatbot`
+- 方案：Free
+- 區域：AWS Asia Pacific 1（Singapore）
+- PostgreSQL：18
+- 保留預設 `production`，並建立永久 `development` 分支。
+- 開發資料庫：`neondb`
+- 開發角色：`neondb_owner`
+- Pooled URL 已放入本機 `.env` 的 `DATABASE_URL`。
+- Direct URL 已放入本機 `.env` 的 `DIRECT_DATABASE_URL`。
+- 兩個 URL 都改為 `postgresql+psycopg://`。
+- 已確認 pooled URL 包含 `-pooler`，direct URL 不包含 `-pooler`。
+- `.env` 已由 `.gitignore` 排除。
+- Pooled 與 direct 連線均已實際連線成功。
+
+#### Alembic 與 users 資料表
+
+- Alembic 已初始化於 `backend/alembic/`。
+- `backend/alembic.ini` 的 `sqlalchemy.url` 保持空白，不保存機密。
+- `backend/alembic/env.py` 從設定模組取得 direct connection，並載入 `Base.metadata`。
+- `User` ORM model 已建立，包含：
+  - UUID `id`
+  - 唯一且有索引的 `email`
+  - `password_hash`
+  - 含時區的 `created_at`
+- Migration：`6e51fbe701b3_create_users_table.py`
+- 已先用 `--sql` 預覽 migration SQL。
+- 已成功執行 `upgrade head` 建立 `users` 與 `alembic_version`。
+- 已確認欄位型別、NOT NULL 條件與唯一 Email 索引正確。
+- 初始 `users` 筆數為 0。
+- 已成功執行 `downgrade base`，確認 `users` 被移除。
+- 已重新執行 `upgrade head`，目前回到 `6e51fbe701b3 (head)`。
+
+## 5. 目前階段剩餘工作
+
+### 本機驗證結果
+
+- [x] Alembic schema check 通過，ORM 與資料庫結構沒有差異。
+- [x] Pooled connection 可看到 `users` 與 `alembic_version`。
+- [x] 全部後端測試通過：13 passed；另有一個不阻斷的 TestClient 棄用警告。
+- [x] `pip check` 通過，沒有損壞的套件相依關係。
+- [x] 前端語法檢查通過，前端測試為 5 passed。
+- [x] `git diff --check` 沒有空白錯誤；只有 Windows LF／CRLF 行尾提醒。
+- [x] 已檢查完整變更檔案與 migration 內容。
+- [x] 機密掃描沒有結果，`.env` 與 Neon 連線字串未出現在待提交檔案中。
+- [x] 本狀態檔已統整本機驗證結果。
+
+### 尚待完成
+
+- [ ] 暫存檔案，檢查 staged diff，建立 commit 並 push 後建立 Pull Request。
+- [ ] 等待 `CI / test` 與 `CI / backend-test` 通過後合併。
+- [ ] 同步本機 `main`、重新測試、清理功能分支，並更新本狀態檔的階段完成紀錄。
+
+## 6. 本階段完成標準
+
+只有下列條件全部成立，資料庫基礎階段才算完成：
+
+- 本機與 GitHub Actions 的前後端測試全部通過。
+- 真實資料庫連線字串及其他機密沒有進入 Git。
+- FastAPI `/health` 仍可正常使用。
+- Neon `development` 資料庫可透過 pooled 與 direct URL 連線。
+- Alembic 可以 upgrade、downgrade，再 upgrade 回 head。
+- ORM metadata 與 Neon schema 完全同步。
+- `users` 資料表由 migration 建立，而非手動建立。
+- Pull Request 合併後完成本機同步與分支清理。
+
+## 7. 目前架構決策
 
 - 正式資料庫使用 Neon PostgreSQL，不使用 MySQL 或 SQLite 作為正式資料庫。
 - 第一版採同步 SQLAlchemy Session 與 Psycopg，先降低學習複雜度。
@@ -97,54 +194,53 @@
 - 上傳的 PDF／CSV 不永久保存。
 - 第一版不做 refresh token、信箱驗證、忘記密碼、第三方登入或 Docker。
 - 管理員後台不是目前優先項目；先完成安全的 API 與資料模型。
+- 不在 CI 連正式 Neon；單元測試使用 mock 或獨立測試環境。
 
-## 下一個大階段：資料庫基礎
+## 8. 後續大階段
 
-### 目標
+資料庫基礎合併後，依序進行：
 
-讓 FastAPI 能以集中設定、安全且可測試的方式連接 PostgreSQL，但先不建立完整登入功能。
+1. Email 正規化與 Argon2 密碼雜湊。
+2. `POST /auth/register`。
+3. `POST /auth/login`。
+4. JWT access token 與 `GET /auth/me`。
+5. 使用者擁有者驗證與授權測試。
+6. `conversations`、`messages` 模型與 migrations。
+7. 個人對話 CRUD API。
+8. Streamlit 登入、註冊與歷史對話介面。
+9. Streamlit 與 FastAPI 串接；JWT 僅放在 `st.session_state`。
+10. FastAPI 部署 Render，完成後端 CD。
+11. 用真正的登入介面變更驗收 Streamlit Cloud 前端 CD。
+12. 主要功能完成後再加入 Redis 限流。
+13. 整理 README、架構圖、Demo、API 文件與履歷描述。
 
-### 預定步驟
+## 9. 每階段固定檢查流程
 
-1. 把四個已選版本加入 `backend/requirements.txt`，安裝並執行 `pip check`。（已完成）
-2. 建立集中管理環境變數的設定模組。（已完成）
-3. 驗證缺少 `DATABASE_URL` 時會產生清楚錯誤，而且匯入 `/health` 不會被無關設定阻斷。（已完成）
-4. 建立 SQLAlchemy Base、engine、session factory 與 FastAPI session dependency。（已完成）
-5. 為設定與 session 行為建立不連正式 Neon 的 Mock 測試。（已完成）
-6. 建立 Neon 專案與開發用 PostgreSQL 資料庫。（下一步）
-7. 將真實連線字串只放在本機 `.env`，並再次執行機密掃描。
-8. 使用真實開發資料庫測試連線，但不連接或修改正式資料。
-9. 初始化 Alembic，分離 pooled 與 direct connection。
-10. 建立 `users` 模型與第一個 migration。
-11. 在開發資料庫套用 migration，檢查資料表後再走 PR／CI／合併流程。
+### 開始前
 
-### 完成標準
+- 讀取本檔案。
+- 檢查目前分支與 Git 狀態。
+- 確認使用正確的虛擬環境。
+- 重新執行上一階段的關鍵測試。
 
-- 本機和 CI 測試全部通過。
-- 正式機密沒有進入 Git。
-- FastAPI `/health` 仍正常。
-- Neon 開發資料庫可連線。
-- Alembic 可以升級與回退 schema。
-- `users` 資料表由 migration 建立，而不是手動建立。
+### 修改後
 
-## 後續階段
+- 語法檢查。
+- 單元測試。
+- `pip check`。
+- `git diff --check`。
 
-1. 使用者模型、Email 正規化與 Argon2 密碼雜湊。
-2. `POST /auth/register`、`POST /auth/login`、`GET /auth/me`。
-3. JWT access token 與擁有者驗證。
-4. conversations 與 messages 模型、migration、CRUD API。
-5. Streamlit 登入／註冊／歷史對話介面。
-6. Streamlit 與 FastAPI 串接，JWT 僅放 `st.session_state`。
-7. FastAPI 部署 Render，完成後端 CD。
-8. 以真正的登入介面變更驗收 Streamlit Cloud 前端 CD。
-9. Redis 登入防暴力破解與使用者提問限流。
-10. README、架構圖、Demo、API 文件與履歷描述整理。
+### 暫存與提交前
 
-## 每階段固定檢查清單
+- 查看變更檔案清單。
+- 閱讀完整 diff。
+- 執行機密掃描。
+- 更新本檔案。
 
-- 開始前：分支、Git 狀態、依賴環境與上一階段測試。
-- 修改前：說明目的、影響範圍與可回復方式。
-- 修改後：語法、單元測試、`pip check`、`git diff --check`。
-- 暫存前：檔案清單、完整 diff 與機密掃描。
-- 合併前：本機測試、PR CI、Required checks。
-- 合併後：`main` CI、同步本機、再次測試、清理分支、更新本檔案。
+### 合併後
+
+- 確認 `main` CI 成功。
+- 同步本機 `main`。
+- 再次測試。
+- 清理本機與遠端功能分支。
+- 更新本檔案，記錄完成結果與下一個階段。
