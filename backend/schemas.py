@@ -64,3 +64,77 @@ class TokenResponse(BaseModel):
 
     # 第一版固定使用 HTTP Bearer authentication。
     token_type: Literal["bearer"] = "bearer"
+
+
+class ConversationTitleBase(BaseModel):
+    """Shared title validation for conversation requests."""
+
+    title: str = Field(min_length=1, max_length=200)
+
+    # Reject undeclared fields such as user_id. Ownership always comes from
+    # the authenticated user, never from request JSON.
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_title(cls, value: object) -> object:
+        """Remove accidental surrounding spaces before validation."""
+
+        # 先 strip 才能阻止 "   " 這種看似有長度的空白標題。
+        if isinstance(value, str):
+            return value.strip()
+
+        return value
+
+
+class ConversationCreate(ConversationTitleBase):
+    """Request body used to create a conversation."""
+
+
+class ConversationUpdate(ConversationTitleBase):
+    """Request body used to rename a conversation."""
+
+
+class ConversationRead(ConversationTitleBase):
+    """Safe conversation information returned by the API."""
+
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+    # 允許直接把 SQLAlchemy Conversation 交給 Pydantic。
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageCreate(BaseModel):
+    """User-provided message content."""
+
+    # role 不放在 request schema 中。
+    # 否則用戶端可以冒充 assistant 寫入訊息。
+    content: str = Field(min_length=1, max_length=20_000)
+
+    # In particular, reject a client-supplied role="assistant" instead of
+    # silently ignoring it. The server chooses the stored message role.
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def normalize_content(cls, value: object) -> object:
+        """Reject messages containing only surrounding whitespace."""
+
+        if isinstance(value, str):
+            return value.strip()
+
+        return value
+
+
+class MessageRead(BaseModel):
+    """Persisted message returned by the API."""
+
+    id: uuid.UUID
+    conversation_id: uuid.UUID
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
