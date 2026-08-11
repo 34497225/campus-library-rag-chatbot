@@ -1,0 +1,665 @@
+# 校園圖書館 RAG 智能客服：面試知識與回答指南
+
+最後更新：2026-08-11
+
+## 1. 文件用途
+
+這份文件整理本專案已實作、已測試及可在面試中說明的技術。每個完整開發階段結束後都要更新：
+
+1. 新增本階段使用的技術與設計理由。
+2. 補充測試、安全邊界與實際驗證結果。
+3. 明確區分「已完成」、「進行中」及「規劃中」，避免履歷或面試中過度宣稱。
+4. 不記錄 API key、JWT secret、密碼或資料庫連線字串。
+
+## 2. 一分鐘專案介紹
+
+這是一個以 Python 開發的校園圖書館文件型 RAG 智能客服。前端使用 Streamlit，能載入範例 FAQ 或使用者上傳的 PDF／CSV，將文件切分後透過 OpenAI Embeddings 建立 FAISS 向量索引，再檢索相關片段交給語言模型回答。後端使用 FastAPI、SQLAlchemy、Alembic 與 Neon PostgreSQL，已完成 Argon2 密碼雜湊、JWT 身分驗證，以及具備使用者資料隔離的 Conversation／Message 資料層與 CRUD API。GitHub Actions 會在 push 與 Pull Request 上分別執行前後端語法和測試。
+
+面試時可以用以下四點快速建立脈絡：
+
+- RAG：回答以文件檢索內容為依據，降低模型憑空回答。
+- Backend：以 FastAPI 分離 HTTP、驗證、repository 與 ORM 責任。
+- Security：密碼使用 Argon2id、JWT secret 由環境提供、資料查詢綁定 authenticated user。
+- Engineering：Alembic 管理 schema、pytest 隔離測試、PR 與 required CI 保護 main。
+
+## 3. 目前完成狀態
+
+| 階段 | 狀態 | 可驗證成果 |
+| --- | --- | --- |
+| Streamlit RAG 展示版 | 已完成 | PDF／CSV、FAISS、OpenAI、雙語介面、來源與 Markdown 匯出 |
+| GitHub CI 與 main 保護 | 已完成 | 前後端 jobs、PR required checks |
+| FastAPI／Neon／Alembic 基礎 | 已完成 | `/health`、Users migration、development branch 驗證 |
+| Auth foundation | 已完成 | register、login、me、Argon2id、JWT、55 項後端測試時完成 |
+| Conversation data foundation | 已完成 | ORM、migration、schemas、owner-filtered repositories、85 項後端測試時完成 |
+| Conversation CRUD API | 已完成 | 7 個受 JWT 保護的 CRUD／Message endpoints、20 項 API tests、Neon development smoke test |
+| Streamlit 登入與持久化歷史 | 規劃中 | 尚未完成，不在面試中宣稱已實作 |
+| Render、Redis | 規劃中 | 尚未完成，不在面試中宣稱已部署或使用 |
+
+## 4. 整體架構
+
+```text
+使用者
+  ↓
+Streamlit
+  ├─ 文件載入與切分
+  ├─ OpenAI Embeddings
+  ├─ FAISS similarity search
+  └─ OpenAI Chat Model
+
+Streamlit（後續串接）
+  ↓ HTTP + Bearer JWT
+FastAPI
+  ├─ Router／Pydantic schemas
+  ├─ Dependency injection／authentication
+  ├─ Repository
+  └─ SQLAlchemy ORM
+       ↓
+Neon PostgreSQL
+
+GitHub Pull Request
+  ↓
+GitHub Actions 前後端 CI
+  ↓
+protected main
+```
+
+### 為什麼前後端分離？
+
+- Streamlit 專注互動介面、文件處理與 RAG 體驗。
+- FastAPI 專注帳號、授權、對話資料與可重用 HTTP API。
+- 資料庫密碼與 JWT secret 只配置在後端環境。
+- 未來可以更換前端，而不必重寫帳號與資料存取邏輯。
+
+## 5. RAG 核心知識
+
+### 5.1 什麼是 RAG？
+
+RAG 是 Retrieval-Augmented Generation，流程不是直接把問題交給模型，而是先從知識文件找出相關內容，再把內容和問題一起交給模型。
+
+```text
+文件 → 切分 → Embedding → Vector Store
+                           ↑
+問題 → Embedding → 相似度搜尋 → 相關片段 → LLM 回答
+```
+
+優點：
+
+- 回答可依據指定文件，而不是只依賴模型訓練知識。
+- 可以替換文件，不需要重新訓練模型。
+- 能顯示來源片段，改善可追溯性。
+
+限制：
+
+- 檢索不到正確片段時，生成品質仍會下降。
+- RAG 降低但不能完全消除 hallucination。
+- 文件解析、chunk 策略及 embedding 品質都會影響結果。
+
+### 5.2 文件載入
+
+- PDF 使用 `PyPDFLoader`。
+- CSV 使用 `CSVLoader` 與 UTF-8 編碼。
+- 上傳檔先寫入 temporary file，解析後在 `finally` 刪除。
+- 不永久保存使用者上傳文件。
+- 文件 metadata 加入 `source_name`，用於顯示證據來源。
+
+面試追問：為什麼需要 temporary file？
+
+> 部分 loader 接受檔案路徑而不是純 bytes，所以先建立暫存檔；使用 `try/finally` 確保成功或失敗都會清理，避免長期保存上傳資料。
+
+### 5.3 Chunking
+
+本專案使用 `RecursiveCharacterTextSplitter`：
+
+- `chunk_size=800`
+- `chunk_overlap=120`
+- 最多 100 個 chunks
+
+chunk 太大會混入過多不相關內容並增加 token；太小則可能切斷語意。Overlap 保留相鄰片段的上下文，但會增加索引量和成本。
+
+### 5.4 Embeddings 與 FAISS
+
+- Embedding model 預設 `text-embedding-3-small`。
+- Embedding 將文字映射成向量，使語意相近文字在向量空間距離較近。
+- FAISS 是本機向量索引，適合展示版與單一工作階段快速檢索。
+- 每次文件來源改變會重建索引；目前不做跨工作階段持久化。
+- 自訂 `DirectOpenAIEmbeddings` adapter，直接呼叫既有 OpenAI Embedding API，避開舊版 LangChain tokenizer 額外下載問題。
+
+面試追問：為什麼不用 PostgreSQL pgvector？
+
+> 第一版展示範圍小且不永久保存上傳文件，FAISS 建立快速、架構較簡單。若需求改成多使用者大量文件與持久化檢索，會評估 pgvector 或 managed vector database。
+
+### 5.5 Retrieval 與 Prompt
+
+- 使用 `similarity_search(question, k=3)` 取三段相關內容。
+- chain type 是 `stuff`，將少量檢索片段直接放入 prompt。
+- Chat model 預設 `gpt-4o-mini`。
+- `temperature=0.2`，偏向穩定、少發散的客服回答。
+- `max_tokens=800` 控制回答長度與成本。
+- Prompt 要求只根據 context 回答；不足時友善說明，不捏造答案。
+- 簡單招呼獨立處理，避免對「你好」回答文件不足。
+
+### 5.6 有限對話脈絡
+
+- `format_history()` 取最後六則訊息，也就是約三組問答。
+- 目的是支援「那週末呢？」這類追問，同時避免 prompt 無限增長。
+- 目前只存在 `st.session_state`，重新開啟工作階段不會保留；後續才接 FastAPI 對話歷史。
+
+## 6. Streamlit 知識
+
+### 6.1 Session State
+
+保存：
+
+- messages
+- question count
+- token count
+- active source ID／name
+- FAISS vector store
+
+Streamlit 每次互動會重新執行 script，因此需要 `st.session_state` 保存工作階段狀態。
+
+### 6.2 文件快取判斷
+
+上傳內容以 SHA-256 產生短 digest，搭配檔名形成 source ID。只有來源改變才重建 vector store，避免每次畫面 rerun 都重算 embeddings。
+
+### 6.3 展示限制
+
+- 檔案最多 5 MB。
+- 文件最多 100 chunks。
+- 每工作階段最多 10 題。
+
+這些限制用來控制記憶體、API 成本及公開展示濫用；不是正式的跨程序限流。Redis 限流仍是後續規劃。
+
+### 6.4 錯誤分類
+
+介面把錯誤區分為：
+
+- Billing／帳戶未啟用。
+- Invalid API key。
+- Rate limit。
+- Timeout／connection。
+- Unknown error。
+
+面試重點：不要把所有外部 API 失敗都說成金鑰錯誤；先辨認失敗層級。
+
+## 7. FastAPI 分層
+
+### 7.1 Router
+
+- `auth.py` 負責 `/auth`。
+- `conversations.py` 負責 `/conversations`。
+- `main.py` 建立 app 並 `include_router()`。
+- `tags` 用於 Swagger 分組。
+- `response_model` 定義對外輸出契約。
+
+### 7.2 Dependency Injection
+
+FastAPI `Depends` 注入：
+
+- `get_db_session`：每個 request 的 SQLAlchemy Session。
+- `get_settings`：環境設定。
+- `get_current_user`：Bearer token 驗證後的 ORM User。
+
+優點：
+
+- endpoint 不自行建立資料庫連線或解析 JWT。
+- 測試可以使用 `app.dependency_overrides` 替換依賴。
+- 驗證失敗會在 endpoint 商業邏輯執行前中止。
+
+### 7.3 HTTP 狀態碼
+
+- `200 OK`：一般讀取、登入、更新。
+- `201 Created`：註冊、建立對話或訊息。
+- `204 No Content`：成功刪除且不回傳 body。
+- `401 Unauthorized`：缺少或無效身分驗證。
+- `404 Not Found`：資源不存在或不屬於目前使用者。
+- `409 Conflict`：Email 重複等資源衝突。
+- `422 Unprocessable Entity`：JSON 欄位未通過 Pydantic 驗證。
+
+## 8. Pydantic 與 API 契約
+
+### 8.1 Request／Response 分離
+
+- `UserCreate` 接收 email、password。
+- `UserRead` 只輸出 id、email、created_at。
+- `ConversationCreate`／`ConversationUpdate` 接收 title。
+- `ConversationRead` 不輸出 owner ID。
+- `MessageCreate` 只接收 content。
+- `MessageRead` 輸出由伺服器決定的 role。
+
+分離的原因是避免直接序列化 ORM 的敏感欄位，例如 `password_hash`。
+
+### 8.2 正規化與限制
+
+- Email 去頭尾空白並轉小寫。
+- Conversation title 去頭尾空白，長度 1～200。
+- Message content 去頭尾空白，長度 1～20,000。
+- `extra="forbid"` 拒絕未宣告欄位。
+- `from_attributes=True` 允許從 ORM object 建立 response。
+
+安全例子：
+
+- Conversation request 不能注入 `user_id`。
+- Message request 不能注入 `role="assistant"`。
+
+## 9. SQLAlchemy ORM 與 Repository
+
+### 9.1 為什麼使用 ORM？
+
+ORM 把資料表映射成 Python objects，統一型別、relationship 與 transaction 操作；複雜或效能敏感查詢仍可以使用 SQLAlchemy expression 明確撰寫 SQL 條件。
+
+### 9.2 Models
+
+User：
+
+- UUID primary key。
+- unique／indexed email。
+- password hash。
+- timezone-aware created time。
+
+Conversation：
+
+- UUID primary key。
+- `user_id` foreign key 與 index。
+- title、created_at、updated_at。
+- 一位 User 對多筆 Conversations。
+
+Message：
+
+- UUID primary key。
+- `conversation_id` foreign key 與 index。
+- role、content、created_at。
+- 一筆 Conversation 對多筆 Messages。
+
+### 9.3 UUID 的取捨
+
+優點：
+
+- 不透露資料筆數或建立順序。
+- 多節點可各自產生 ID。
+
+限制：
+
+- 比整數占更多空間。
+- 隨機 UUID 的 index locality 較差。
+- UUID 不是授權機制；知道 UUID 仍必須通過 owner check。
+
+### 9.4 Repository Pattern
+
+Repository 集中資料存取：
+
+- endpoint 處理 HTTP 語意。
+- schema 處理輸入輸出驗證。
+- repository 處理查詢、commit、rollback。
+- model 描述資料表。
+
+Owner-filtered query 會在同一個 SQL WHERE 中同時限制：
+
+```text
+Conversation.id == requested_id
+Conversation.user_id == authenticated_user.id
+```
+
+不先只依 ID 讀出資料再於 Python 判斷，能降低日後忘記授權檢查的風險。
+
+### 9.5 Transaction
+
+- 寫入成功後 `commit()`。
+- 失敗後必須 `rollback()`，否則 Session 仍處於失敗交易狀態。
+- `refresh()` 讀回資料庫產生的 timestamp 等欄位。
+- `expire_on_commit=False` 讓 commit 後 ORM object 屬性仍可供 response 使用。
+
+### 9.6 Cascade
+
+- 刪除 User 連帶刪除 Conversations 與 Messages。
+- 刪除 Conversation 連帶刪除 Messages。
+- ORM relationship 使用 `cascade="all, delete-orphan"`。
+- Database foreign key 使用 `ON DELETE CASCADE`。
+- `passive_deletes=True` 讓資料庫執行 cascade。
+
+雙層設計讓 ORM 操作與直接 SQL 刪除都能維持資料完整性。
+
+## 10. PostgreSQL、Neon 與 Alembic
+
+### 10.1 Neon branch
+
+- production 是預設分支。
+- development 用於目前開發與 migration 驗收。
+- 測試不連 Neon，而使用隔離 SQLite。
+
+資料庫 branch 和 Git branch 是兩套不同概念：Git branch 管程式碼；Neon branch 管資料庫 schema／data。
+
+### 10.2 Pooled 與 Direct URL
+
+- FastAPI 日常 request 使用 pooled `DATABASE_URL`。
+- Alembic migration 使用 direct `DIRECT_DATABASE_URL`。
+- `pool_pre_ping=True` 在取用連線時檢查失效連線。
+
+### 10.3 Alembic
+
+已完成 revisions：
+
+- `6e51fbe701b3`：users table。
+- `37b4f29eb2f9`：conversations 與 messages tables。
+
+重要命令概念：
+
+- `revision --autogenerate`：比較 ORM metadata 與目前 database schema，產生候選 migration。
+- 人工閱讀 migration：autogenerate 不是絕對正確。
+- `upgrade head`：套用到最新版。
+- `downgrade <revision>`：驗證可逆性。
+- `current`：讀取 database 現在的 revision。
+- `check`：確認 ORM metadata 沒有尚未產生的 schema 差異。
+
+## 11. 密碼安全與 Argon2id
+
+- 明文密碼不進 repository、不進資料庫、不進 response。
+- `argon2-cffi` 產生 Argon2id hash。
+- 每次 hash 使用不同 salt，所以相同密碼會有不同結果。
+- 登入使用 verify，不把 hash 解密；安全密碼 hash 本來就是不可逆。
+- 無效 hash 安全回傳驗證失敗。
+- Email 不存在時仍驗證 dummy Argon2 hash，降低帳號存在與否的回應時間差。
+- Email unique index 是 race condition 下的最後防線；應用層預查只用來提供友善 409。
+
+面試追問：hash 和 encryption 差別？
+
+> Encryption 可用 key 還原，適合需要取回原文的資料；password 不需要取回，因此使用單向且刻意昂貴的 password hashing algorithm。
+
+## 12. JWT 與身分驗證
+
+### 12.1 Access Token
+
+- PyJWT。
+- HS256。
+- `sub` 保存 User UUID 字串。
+- `iat` 保存簽發時間。
+- `exp` 保存過期時間。
+- 預設有效時間 60 分鐘，必須大於 0。
+- secret 至少 32 bytes，只從環境設定取得。
+
+JWT 是簽章 token，不是加密容器；payload 不應放密碼或其他機密。
+
+### 12.2 Bearer 驗證流程
+
+```text
+Authorization header
+  → HTTPBearer
+  → 驗證簽章、algorithm、exp
+  → 讀取 sub
+  → UUID parsing
+  → 查詢 User
+  → current_user
+```
+
+缺少、無效、過期 token、非 UUID subject 或已刪除使用者，統一回覆 401，避免洩漏內部失敗細節。
+
+### 12.3 目前刻意不做的功能
+
+- Refresh token。
+- Email verification。
+- Forgot password。
+- OAuth。
+- Admin backend。
+
+第一版優先完成可展示的安全主流程，再逐步增加功能。
+
+## 13. Authorization 與資料隔離
+
+Authentication 回答「你是誰」；Authorization 回答「你能操作什麼」。JWT 驗證成功不代表可以讀取任意 conversation。
+
+核心原則：
+
+- owner ID 永遠取自 `current_user.id`。
+- 不接受 request body／query parameter 指定 owner。
+- list query 必須以 owner ID 過濾。
+- read／update／delete 同時比對 resource ID 與 owner ID。
+- 不存在和別人的資源使用相同 404，降低 resource enumeration。
+- Message create／list 先驗證 parent conversation 的 owner。
+
+### 13.1 Conversation CRUD API
+
+已完成的 endpoints：
+
+| Method | Path | 成功狀態 | 用途 |
+| --- | --- | --- | --- |
+| POST | `/conversations` | 201 | 建立目前使用者的對話 |
+| GET | `/conversations` | 200 | 列出目前使用者的對話 |
+| GET | `/conversations/{conversation_id}` | 200 | 讀取一筆自己的對話 |
+| PATCH | `/conversations/{conversation_id}` | 200 | 修改自己的對話標題 |
+| DELETE | `/conversations/{conversation_id}` | 204 | 刪除自己的對話與 dependent messages |
+| POST | `/conversations/{conversation_id}/messages` | 201 | 在自己的對話建立 user message |
+| GET | `/conversations/{conversation_id}/messages` | 200 | 列出自己對話中的 messages |
+
+設計重點：
+
+- Endpoint 只負責 HTTP、dependency 與 response schema；SQL 查詢留在 repository。
+- 所有 endpoints 使用 `get_current_user`，沒有讓 caller 傳入 owner ID。
+- `GET /conversations` 在沒有資料時回 `[]`，不是 404。
+- Message list 用 `None` 區分「conversation 不可存取」，用空 list 表示「可存取但尚無訊息」。
+- Client 建立 message 時只能傳 content；伺服器固定 role 為 `user`。
+- Assistant role 保留給未來受信任的後端 RAG 流程，不讓 client 冒充。
+- 刪除成功使用 204 且 response body 為空。
+- UUID path parameter 由 FastAPI 驗證；格式錯誤在 endpoint 前回 422。
+
+### 13.2 404 與 403 的取捨
+
+本專案對「不存在」與「存在但屬於別人」都回：
+
+```json
+{"detail": "Conversation not found."}
+```
+
+若對別人的資料回 403，攻擊者可以判斷某個 UUID 確實存在。統一 404 能減少 resource enumeration 資訊洩漏，但 server logs／observability 仍可在內部區分失敗原因。
+
+### 13.3 Conversation API 階段驗證
+
+- Conversation API tests：20 passed。
+- 完整 backend tests：105 passed。
+- Frontend tests：5 passed。
+- 前後端 `pip check`：無 broken requirements。
+- OpenAPI 已列出 `/conversations`、`/{conversation_id}` 與 `/messages` paths。
+- Alembic current：`37b4f29eb2f9 (head)`。
+- Alembic check：無新的 upgrade operations。
+- Neon development smoke test 驗證 register、login、conversation create/list/read/rename/delete、message create/list，以及刪除後 404。
+- Smoke test 使用隨機臨時 Email，完成後刪除臨時 User，透過 cascade 一併清理資料。
+
+## 14. 測試策略
+
+### 14.1 測試金字塔在本專案的使用
+
+- 純函式／schema tests：快速驗證邊界。
+- repository tests：驗證 SQLAlchemy query、transaction、constraint。
+- API integration tests：TestClient 經過 router、dependency、schema、repository。
+- 手動 Swagger／Neon 驗收：驗證真實設定與 PostgreSQL 行為。
+
+### 14.2 隔離 SQLite
+
+- `sqlite+pysqlite:///:memory:`。
+- `StaticPool` 讓 TestClient 不同 Session 共用同一個記憶體 database。
+- `check_same_thread=False` 配合 TestClient 執行模型。
+- `Base.metadata.create_all()` 建立測試 schema。
+- dependency override 替換正式 database session 與 settings。
+- 測試完成清除 overrides、drop tables、dispose engine。
+- cascade tests 明確啟用 SQLite foreign keys。
+
+### 14.3 測試不做什麼
+
+- 不連 production Neon。
+- 不呼叫真實 OpenAI API。
+- 不使用真實 JWT secret。
+- 不用 timing threshold 測防枚舉，避免 CI 不穩；改用 mock 驗證 dummy hash 路徑確實執行。
+
+### 14.4 重要測試案例
+
+- Argon2 salt、正確／錯誤密碼、無效 hash。
+- JWT wrong secret、expired、invalid、bad subject。
+- Email normalization、password／title／message boundary。
+- Duplicate email 與 rollback。
+- Owner A 無法讀、改、刪 Owner B conversation。
+- Owner A 無法在 Owner B conversation 建立或列出 messages。
+- Invalid message role 被 database constraint 拒絕。
+- Conversation／User deletion cascade。
+- API response 不洩漏 password hash、user ID 或可注入 role。
+- Conversation list 不混入其他 owner 的資料。
+- Read／rename／delete 對 inaccessible 與 missing conversation 使用相同 404。
+- 所有 Conversation／Message endpoints 缺少 Bearer token 時回 401。
+- Message API 正確區分 owned empty list 與 inaccessible conversation。
+
+## 15. GitHub Actions 與開發流程
+
+CI 在 push main 與 PR main 時執行兩個 jobs：
+
+Frontend job：
+
+- Python 3.11。
+- pip cache。
+- 安裝 frontend dev requirements。
+- `py_compile app.py`。
+- `pytest tests -q`。
+
+Backend job：
+
+- Python 3.11。
+- pip cache。
+- 安裝 backend dev requirements。
+- backend syntax check。
+- `pytest backend/tests -q`。
+
+Repository workflow：
+
+```text
+main 同步
+  → feature branch
+  → 小型可驗證單元
+  → 完整測試
+  → staged diff／格式／機密檢查
+  → commit／push
+  → Pull Request
+  → required CI
+  → merge
+  → 合併後重新測試與清理分支
+```
+
+main 禁止直接 push、force push 與刪除，降低未驗證變更進入穩定分支的風險。
+
+## 16. Security Checklist
+
+- `.env` 在 `.gitignore`。
+- API key、database URL、JWT secret 不提交。
+- `.env.example` 只保存 placeholder。
+- Password 使用 Argon2id，不保存明文。
+- JWT algorithm 固定 HS256，不從 token header 任意接受。
+- JWT secret 長度驗證。
+- Pydantic request 禁止 owner／role injection。
+- Response schema 過濾敏感欄位。
+- Owner-filtered SQL query。
+- 統一 authentication error 與 inaccessible resource 行為。
+- 測試及 CI 不接 production services。
+- 提交前檢查 staged file list、完整 diff、格式與 secret patterns。
+
+## 17. 設計取捨與誠實限制
+
+### 同步 SQLAlchemy，而不是 async
+
+目前流量與專題範圍不需要增加 async database 複雜度。同步 Session 容易理解、測試及維護。若高併發 request 大量等待 I/O，再評估 async engine/session。
+
+### FAISS，而不是持久化 vector database
+
+展示版文件量小、不永久保存上傳資料。代價是重啟或切換文件要重建索引，不能跨使用者共享大型知識庫。
+
+### Access token only
+
+第一版流程簡單；token 過期後需重新登入。正式產品會再評估 refresh token rotation、revocation 與裝置管理。
+
+### SQLite tests + PostgreSQL manual verification
+
+SQLite 提供快速隔離測試，但型別、constraint、timezone 與 SQL 行為可能和 PostgreSQL 不完全相同，因此 migration 必須在 Neon development 做 upgrade／downgrade／schema 驗證。
+
+### Session question limit，不是分散式限流
+
+目前限制只保護單一 Streamlit session。多 instance 或惡意重開 session 無法共享計數，所以 Redis rate limiting 留到主流程完成後加入。
+
+## 18. 常見面試問題與回答方向
+
+### Q1：這個專案最困難的部分是什麼？
+
+可以回答資料擁有權不是只在 UI 隱藏，而是從 JWT current user 一路帶到 repository SQL WHERE，並用兩位使用者的 API／repository tests 證明隔離。這同時涉及 authentication、authorization、ORM query 與測試設計。
+
+### Q2：你如何降低 hallucination？
+
+使用文件檢索、k=3 context、低 temperature、限定 prompt 只能依 context 回答、不足時使用 fallback，並顯示來源。也要誠實說無法完全消除，檢索品質仍是關鍵。
+
+### Q3：為什麼使用 Alembic，不直接 create_all？
+
+`create_all` 適合測試或全新資料庫，不能可靠記錄 production schema 的逐步演進。Alembic revision 可版本化、review、upgrade／downgrade並由 `alembic_version` 確認狀態。
+
+### Q4：如何避免帳號枚舉？
+
+登入錯誤使用一致訊息；不存在 email 仍執行 dummy Argon2 verify；private resource 不存在與不屬於使用者都回 404。
+
+### Q5：JWT 的風險是什麼？
+
+JWT 被竊取後在過期前可被使用，所以必須 HTTPS、短效期、妥善保存、不可放敏感 payload。正式系統還需 refresh rotation、revocation 或 session/device strategy。
+
+### Q6：為什麼資料庫 constraint 和 Pydantic 都要驗證？
+
+Pydantic 提供快速友善的 API 錯誤；database constraint 是所有寫入路徑的最後防線，包含 script、migration 或未來其他服務。
+
+### Q7：你如何處理 transaction failure？
+
+Repository 在 commit 發生 SQLAlchemyError 時 rollback 再 re-raise；測試會故意觸發 duplicate email 或 invalid role，並確認 Session 後續仍可使用且沒有半完成資料。
+
+### Q8：測試為什麼使用 dependency override？
+
+Endpoint 不需要為測試寫特殊分支。FastAPI override 可以替換 database session 與 settings，使 TestClient 走完整 HTTP pipeline 但不接觸 Neon 或真實 secrets。
+
+### Q9：如果要擴充到正式服務，下一步是什麼？
+
+Conversation API 已完成；接下來是 Streamlit JWT integration、持久化歷史、Render backend 與 E2E 驗收，再加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
+
+### Q10：你如何證明不是只把套件拼在一起？
+
+說明實際處理的邊界：舊 LangChain tokenizer 問題用 adapter 解決；密碼 timing path 用 mock 測行為；owner isolation 放進 SQL WHERE；Alembic 在 Neon development 做往返驗證；CI 與 branch protection 把驗證納入合併流程。
+
+## 19. 可使用的 STAR 故事
+
+### 故事一：OpenAI／LangChain 執行失敗分層診斷
+
+- Situation：介面可以顯示，但建立 embeddings 時失敗。
+- Task：判斷是 UI、程式、網路、key 或帳戶問題。
+- Action：分離驗證 UI、文件流程、直接 API authentication 與 embeddings 呼叫；處理 legacy tokenizer 下載問題後，繼續追蹤到帳戶 billing 狀態。
+- Result：避免反覆更換 key 或盲目改程式，定位真正失敗層級。
+
+### 故事二：建立資料擁有權防線
+
+- Situation：加入多使用者 Conversation／Message 後，UUID 本身不能保證隱私。
+- Task：保證使用者只能操作自己的資料。
+- Action：owner ID 只取自 JWT current user；repository 同時以 resource ID 與 owner ID 查詢；跨使用者和不存在資源同樣回覆；加入兩使用者隔離測試。
+- Result：授權規則由 UI、API、repository 到 tests 都一致。
+
+### 故事三：安全 migration
+
+- Situation：新增 conversations／messages 會改動遠端 PostgreSQL schema。
+- Task：確保 migration 正確、可逆且未誤用 production。
+- Action：在 Neon development 產生並人工閱讀 migration，驗證 upgrade、downgrade、upgrade、current、check、foreign keys、indexes、check constraint 與 cascade。
+- Result：schema 與 ORM metadata 一致，且有可重現的 migration 紀錄。
+
+## 20. 每階段更新模板
+
+階段完成後，在本文件更新：
+
+```text
+階段名稱：
+完成日期：
+功能與使用者價值：
+新增技術：
+資料流：
+安全設計：
+測試與驗證數字：
+遇到的問題與解法：
+設計取捨：
+面試可說重點：
+仍未完成：
+```
+
+同時更新第 3 節狀態表、相關技術章節、常見面試問題與 STAR 故事。

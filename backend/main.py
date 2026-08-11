@@ -2,6 +2,8 @@ from fastapi import FastAPI
 
 from backend.auth import router as auth_router
 
+from backend.conversations import router as conversations_router
+
 
 app = FastAPI(
     title="Campus Library Chatbot API",
@@ -10,6 +12,7 @@ app = FastAPI(
 )
 
 app.include_router(auth_router)
+app.include_router(conversations_router)
 
 
 @app.get("/health", tags=["system"])
