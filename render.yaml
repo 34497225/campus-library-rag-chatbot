@@ -3,6 +3,7 @@ services:
     name: campus-library-chatbot-api
     runtime: python
     plan: free
+    region: singapore
 
     # 只有 GitHub required checks 通過後，Render 才自動部署 main。
     autoDeployTrigger: checksPass
