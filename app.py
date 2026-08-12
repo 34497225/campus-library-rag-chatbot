@@ -21,15 +21,30 @@ from langchain.vectorstores import FAISS
 
 from frontend_api import (
     BackendAPIError,
+    create_conversation,
+    create_message,
+    delete_conversation,
     fetch_current_user,
+    list_conversations,
+    list_messages,
     login_user,
     register_user,
+    rename_conversation,
 )
 from frontend_auth import (
     clear_authentication,
     initialize_auth_state,
     is_authenticated,
     store_authentication,
+)
+from frontend_conversations import (
+    activate_conversation,
+    build_conversation_title,
+    clear_conversation_state,
+    initialize_conversation_state,
+    normalize_conversation,
+    normalize_message,
+    replace_conversations,
 )
 
 
@@ -109,6 +124,21 @@ TEXT = {
         "invalid_auth_input": "輸入資料格式不正確，請檢查 Email 與密碼。",
         "invalid_auth_response": "後端回傳的登入資料格式不正確。",
         "auth_request_failed": "帳號請求失敗（HTTP {status}）。",
+        "conversation_history": "個人對話紀錄",
+        "conversation_select": "切換對話",
+        "new_conversation": "新增對話",
+        "new_conversation_title": "新對話標題",
+        "create_conversation": "建立",
+        "rename_conversation": "重新命名",
+        "delete_conversation": "刪除目前對話",
+        "no_conversations": "尚無已儲存的對話；送出第一個問題時會自動建立。",
+        "conversation_api_failed": "對話服務失敗（HTTP {status}）。",
+        "conversation_unavailable": "目前無法連線到對話服務，請稍後重試。",
+        "conversation_not_found": "這筆對話不存在或無法存取，清單已重新整理。",
+        "message_save_failed": "問題尚未儲存，因此本次不會呼叫 RAG。請重試。",
+        "answer_save_failed": "回答已顯示，但尚未儲存。可按下方按鈕重試。",
+        "retry_answer_save": "重試儲存回答",
+        "answer_save_success": "回答已補存完成。",
         "unknown": "{type}: {message}",
     },
     "en": {
@@ -167,6 +197,21 @@ TEXT = {
         "invalid_auth_input": "The input is invalid. Check the email and password.",
         "invalid_auth_response": "The backend returned invalid login data.",
         "auth_request_failed": "The account request failed (HTTP {status}).",
+        "conversation_history": "Personal conversations",
+        "conversation_select": "Switch conversation",
+        "new_conversation": "New conversation",
+        "new_conversation_title": "New conversation title",
+        "create_conversation": "Create",
+        "rename_conversation": "Rename",
+        "delete_conversation": "Delete current conversation",
+        "no_conversations": "No saved conversations yet. The first question will create one automatically.",
+        "conversation_api_failed": "The conversation service failed (HTTP {status}).",
+        "conversation_unavailable": "The conversation service is unavailable. Try again later.",
+        "conversation_not_found": "This conversation is missing or inaccessible. The list was refreshed.",
+        "message_save_failed": "The question was not saved, so RAG was not called. Try again.",
+        "answer_save_failed": "The answer is visible but not saved yet. Use the retry button below.",
+        "retry_answer_save": "Retry saving answer",
+        "answer_save_success": "The answer was saved successfully.",
         "unknown": "{type}: {message}",
     },
 }
@@ -333,6 +378,7 @@ def initialize_state() -> None:
     # 登入狀態和 RAG 狀態分別由各自的 helper 初始化。
     # 函式只會補上不存在的 key，不會在 Streamlit rerun 時清除登入。
     initialize_auth_state(st.session_state)
+    initialize_conversation_state(st.session_state)
 
     defaults = {
         "messages": [],
@@ -418,7 +464,7 @@ def reset_conversation() -> None:
 def reset_user_workspace() -> None:
     """Clear user-specific RAG data when the user logs out."""
 
-    reset_conversation()
+    clear_conversation_state(st.session_state)
 
     # 同一個瀏覽器工作階段可能換另一個帳號登入。
     # 登出時清除文件索引與來源，避免下一位使用者沿用前一位的資料。
@@ -567,7 +613,233 @@ def set_source(source_id: str, source_name: str, documents: List[Document]) -> N
         st.session_state.vector_store = build_vector_store(documents)
         st.session_state.active_source_id = source_id
         st.session_state.active_source_name = source_name
+
+
+def conversation_error_message(
+    error: BackendAPIError,
+    language: str,
+) -> str:
+    """Convert persistence failures into safe bilingual UI text."""
+
+    if error.status_code is None:
+        return t(language, "conversation_unavailable")
+    if error.status_code == 404:
+        return t(language, "conversation_not_found")
+
+    return t(
+        language,
+        "conversation_api_failed",
+        status=str(error.status_code),
+    )
+
+
+def handle_conversation_error(
+    error: BackendAPIError,
+    language: str,
+) -> None:
+    """Apply shared 401 privacy cleanup and display a safe error."""
+
+    if error.status_code == 401:
+        clear_authentication(st.session_state)
+        reset_user_workspace()
+        st.warning(t(language, "session_expired"))
+        st.rerun()
+
+    st.error(conversation_error_message(error, language))
+
+
+def refresh_conversation_list(language: str) -> bool:
+    """Refresh the owner-filtered conversation list from FastAPI."""
+
+    try:
+        conversations = list_conversations(
+            base_url=BACKEND_API_URL,
+            access_token=st.session_state.access_token,
+        )
+        replace_conversations(st.session_state, conversations)
+    except (BackendAPIError, ValueError) as error:
+        if isinstance(error, BackendAPIError):
+            handle_conversation_error(error, language)
+        else:
+            st.error(t(language, "invalid_auth_response"))
+        return False
+
+    return True
+
+
+def load_active_conversation(language: str) -> bool:
+    """Load messages only when the selected conversation changes."""
+
+    conversation_id = st.session_state.active_conversation_id
+    if conversation_id is None:
         reset_conversation()
+        return True
+
+    if st.session_state.loaded_conversation_id == conversation_id:
+        return True
+
+    try:
+        messages = list_messages(
+            base_url=BACKEND_API_URL,
+            access_token=st.session_state.access_token,
+            conversation_id=conversation_id,
+        )
+        activate_conversation(
+            st.session_state,
+            conversation_id,
+            messages,
+        )
+    except BackendAPIError as error:
+        handle_conversation_error(error, language)
+        if error.status_code == 404:
+            refresh_conversation_list(language)
+        return False
+    except ValueError:
+        st.error(t(language, "invalid_auth_response"))
+        return False
+
+    return True
+
+
+def render_conversation_controls(language: str) -> None:
+    """Render owner-scoped create, switch, rename, and delete controls."""
+
+    st.subheader(t(language, "conversation_history"))
+    conversations = st.session_state.conversations
+
+    if conversations:
+        conversation_ids = [item["id"] for item in conversations]
+        titles = {item["id"]: item["title"] for item in conversations}
+        current_id = st.session_state.active_conversation_id
+        current_index = (
+            conversation_ids.index(current_id)
+            if current_id in conversation_ids
+            else 0
+        )
+        selected_id = st.selectbox(
+            t(language, "conversation_select"),
+            conversation_ids,
+            index=current_index,
+            format_func=lambda item_id: titles[item_id],
+        )
+        if selected_id != current_id:
+            st.session_state.active_conversation_id = selected_id
+            st.session_state.loaded_conversation_id = None
+            st.session_state.pending_assistant_message = None
+            st.rerun()
+
+        with st.form("rename_conversation_form"):
+            renamed_title = st.text_input(
+                t(language, "rename_conversation"),
+                value=titles[selected_id],
+            )
+            rename_submitted = st.form_submit_button(
+                t(language, "rename_conversation")
+            )
+        if rename_submitted:
+            try:
+                rename_conversation(
+                    base_url=BACKEND_API_URL,
+                    access_token=st.session_state.access_token,
+                    conversation_id=selected_id,
+                    title=renamed_title,
+                )
+            except BackendAPIError as error:
+                handle_conversation_error(error, language)
+            else:
+                refresh_conversation_list(language)
+                st.rerun()
+
+        if st.button(t(language, "delete_conversation")):
+            try:
+                delete_conversation(
+                    base_url=BACKEND_API_URL,
+                    access_token=st.session_state.access_token,
+                    conversation_id=selected_id,
+                )
+            except BackendAPIError as error:
+                handle_conversation_error(error, language)
+            else:
+                st.session_state.active_conversation_id = None
+                st.session_state.loaded_conversation_id = None
+                st.session_state.pending_assistant_message = None
+                refresh_conversation_list(language)
+                st.rerun()
+    else:
+        st.caption(t(language, "no_conversations"))
+
+    with st.form("new_conversation_form", clear_on_submit=True):
+        new_title = st.text_input(t(language, "new_conversation_title"))
+        create_submitted = st.form_submit_button(
+            t(language, "create_conversation")
+        )
+    if create_submitted:
+        try:
+            created = create_conversation(
+                base_url=BACKEND_API_URL,
+                access_token=st.session_state.access_token,
+                title=new_title,
+            )
+        except BackendAPIError as error:
+            handle_conversation_error(error, language)
+        else:
+            try:
+                safe_created = normalize_conversation(created)
+            except ValueError:
+                st.error(t(language, "invalid_auth_response"))
+                return
+            refresh_conversation_list(language)
+            st.session_state.active_conversation_id = safe_created["id"]
+            st.session_state.loaded_conversation_id = None
+            st.rerun()
+
+
+def ensure_active_conversation(question: str) -> str:
+    """Return the active ID, auto-creating a titled conversation if needed."""
+
+    active_id = st.session_state.active_conversation_id
+    if isinstance(active_id, str):
+        return active_id
+
+    created = create_conversation(
+        base_url=BACKEND_API_URL,
+        access_token=st.session_state.access_token,
+        title=build_conversation_title(question),
+    )
+    safe_created = normalize_conversation(created)
+    replace_conversations(
+        st.session_state,
+        [safe_created, *st.session_state.conversations],
+    )
+    st.session_state.active_conversation_id = safe_created["id"]
+    st.session_state.loaded_conversation_id = safe_created["id"]
+    return safe_created["id"]
+
+
+def retry_pending_assistant_message(language: str) -> None:
+    """Offer recovery when RAG succeeded but its answer was not persisted."""
+
+    pending = st.session_state.pending_assistant_message
+    if not isinstance(pending, dict):
+        return
+    if pending.get("conversation_id") != st.session_state.active_conversation_id:
+        return
+
+    st.warning(t(language, "answer_save_failed"))
+    if st.button(t(language, "retry_answer_save")):
+        try:
+            create_message(
+                base_url=BACKEND_API_URL,
+                access_token=st.session_state.access_token,
+                conversation_id=pending["conversation_id"],
+                content=pending["content"],
+                assistant=True,
+            )
+        except BackendAPIError as error:
+            handle_conversation_error(error, language)
+        else:
+            st.session_state.pending_assistant_message = None
+            st.success(t(language, "answer_save_success"))
 
 
 def main() -> None:
@@ -584,6 +856,9 @@ def main() -> None:
         authenticated = render_authentication(language)
 
         if authenticated:
+            st.divider()
+            if refresh_conversation_list(language):
+                render_conversation_controls(language)
             st.divider()
             st.subheader(t(language, "stats"))
             # 用 placeholder 更新既有元件，不需要為了刷新統計而整頁重跑。
@@ -606,6 +881,22 @@ def main() -> None:
     if not authenticated:
         st.info(t(language, "auth_required"))
         return
+
+    # 對話清單在 sidebar 載入後，再依目前選取的 ID 取得訊息。
+    # 這能讓 rerun 保留選取項目，又不必每次互動都重抓同一份 history。
+    if not load_active_conversation(language):
+        return
+
+    # load_active_conversation 可能剛把持久化 history 載入 session，
+    # 因此再更新一次既有 placeholder，讓 sidebar 立即顯示正確題數。
+    question_count_metric.metric(
+        t(language, "question_count"),
+        st.session_state.question_count,
+    )
+    token_count_metric.metric(
+        t(language, "token_count"),
+        st.session_state.total_tokens,
+    )
 
     if not os.getenv("OPENAI_API_KEY"):
         st.error(t(language, "missing_key"))
@@ -658,17 +949,15 @@ def main() -> None:
         for example in examples[language]:
             st.code(example, language=None)
 
-    columns = st.columns([1, 2])
-    if columns[0].button(t(language, "clear")):
-        reset_conversation()
-        st.rerun()
     if st.session_state.messages:
-        columns[1].download_button(
+        st.download_button(
             t(language, "download"),
             data=conversation_markdown(st.session_state.messages, st.session_state.active_source_name),
             file_name="library_customer_service_conversation.md",
             mime="text/markdown",
         )
+
+    retry_pending_assistant_message(language)
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
@@ -690,7 +979,33 @@ def main() -> None:
         disabled=question_limit_reached,
     )
     if question:
-        st.session_state.messages.append({"role": "user", "content": question})
+        try:
+            # 先確保有一筆 owned Conversation，再保存 user message。
+            # 如果這一步失敗，就不呼叫 OpenAI，避免產生無法追溯的回答。
+            conversation_id = ensure_active_conversation(question)
+            saved_user_message = create_message(
+                base_url=BACKEND_API_URL,
+                access_token=st.session_state.access_token,
+                conversation_id=conversation_id,
+                content=question,
+            )
+            safe_user_message = normalize_message(saved_user_message)
+        except BackendAPIError as error:
+            handle_conversation_error(error, language)
+            st.error(t(language, "message_save_failed"))
+            return
+        except ValueError:
+            st.error(t(language, "invalid_auth_response"))
+            return
+
+        st.session_state.messages.append(
+            {
+                "id": safe_user_message["id"],
+                "role": "user",
+                "content": safe_user_message["content"],
+                "created_at": safe_user_message["created_at"],
+            }
+        )
         with st.chat_message("user"):
             st.markdown(question)
 
@@ -704,6 +1019,44 @@ def main() -> None:
             st.session_state.messages.append(
                 {"role": "assistant", "content": answer}
             )
+
+            try:
+                # assistant role 不是由 request JSON 提供，而是由後端的
+                # dedicated endpoint 固定，避免一般 message payload 注入角色。
+                saved_answer = create_message(
+                    base_url=BACKEND_API_URL,
+                    access_token=st.session_state.access_token,
+                    conversation_id=conversation_id,
+                    content=answer,
+                    assistant=True,
+                )
+                safe_answer = normalize_message(saved_answer)
+                st.session_state.messages[-1] = {
+                    "id": safe_answer["id"],
+                    "role": "assistant",
+                    "content": safe_answer["content"],
+                    "created_at": safe_answer["created_at"],
+                }
+                st.session_state.pending_assistant_message = None
+            except BackendAPIError as error:
+                if error.status_code == 401:
+                    handle_conversation_error(error, language)
+                # RAG 已成功且使用者已看到答案時，不把畫面上的回答刪掉。
+                # 保存 retry payload，讓暫時性網路錯誤可在下次 rerun 補寫。
+                st.session_state.pending_assistant_message = {
+                    "conversation_id": conversation_id,
+                    "content": answer,
+                }
+                st.warning(t(language, "answer_save_failed"))
+            except ValueError:
+                # RAG 已成功且使用者已看到答案時，不把畫面上的回答刪掉。
+                # 保存 retry payload，讓暫時性網路錯誤可在下次 rerun 補寫。
+                st.session_state.pending_assistant_message = {
+                    "conversation_id": conversation_id,
+                    "content": answer,
+                }
+                st.warning(t(language, "answer_save_failed"))
+
             st.session_state.question_count += 1
             st.session_state.total_tokens += used_tokens
             # 直接更新側邊欄中的原有統計元件，避免用 st.rerun() 重新建立

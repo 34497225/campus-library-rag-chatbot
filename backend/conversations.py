@@ -216,6 +216,36 @@ def list_messages_endpoint(
     return [MessageRead.model_validate(message) for message in messages]
 
 
+@router.post(
+    "/{conversation_id}/messages/assistant",
+    response_model=MessageRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_assistant_message_endpoint(
+    conversation_id: uuid.UUID,
+    payload: MessageCreate,
+    session: Annotated[Session, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> MessageRead:
+    """Persist a RAG answer in an owned conversation."""
+
+    # The request still cannot inject a role field. This dedicated endpoint
+    # tells the backend that the Streamlit server is saving an assistant
+    # answer, while ownership always comes from the authenticated JWT user.
+    message = create_message_for_owner(
+        session=session,
+        conversation_id=conversation_id,
+        owner_id=current_user.id,
+        role="assistant",
+        content=payload.content,
+    )
+
+    if message is None:
+        raise conversation_not_found()
+
+    return MessageRead.model_validate(message)
+
+
 def conversation_not_found() -> HTTPException:
     """Create the shared response for missing or inaccessible conversations."""
 
