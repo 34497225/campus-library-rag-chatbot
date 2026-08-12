@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: campus-library-chatbot-api
+    runtime: python
+    plan: free
+
+    # 只有 GitHub required checks 通過後，Render 才自動部署 main。
+    autoDeployTrigger: checksPass
+
+    # 安裝 FastAPI、Uvicorn、SQLAlchemy、Alembic 等後端套件。
+    buildCommand: pip install -r backend/requirements.txt
+
+    # 免費方案不能使用 paid pre-deploy command，
+    # 因此服務啟動前先執行 migration，再啟動 FastAPI。
+    startCommand: python -m alembic -c backend/alembic.ini upgrade head && python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+
+    # Render 會定期呼叫此路徑，確認服務仍能回應 HTTP。
+    healthCheckPath: /health
+
+    envVars:
+      # API 一般查詢使用 Neon pooled connection URL。
+      - key: DATABASE_URL
+        sync: false
+
+      # Alembic migration 使用 Neon direct connection URL。
+      - key: DIRECT_DATABASE_URL
+        sync: false
+
+      # 由 Render 產生隨機 256-bit secret，不寫入 Git。
+      - key: JWT_SECRET_KEY
+        generateValue: true
+
+      - key: JWT_ALGORITHM
+        value: HS256
+
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
