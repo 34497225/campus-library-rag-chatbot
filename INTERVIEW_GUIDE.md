@@ -1,6 +1,6 @@
 # 校園圖書館 RAG 智能客服：面試知識與回答指南
 
-最後更新：2026-08-11
+最後更新：2026-08-12
 
 ## 1. 文件用途
 
@@ -13,7 +13,7 @@
 
 ## 2. 一分鐘專案介紹
 
-這是一個以 Python 開發的校園圖書館文件型 RAG 智能客服。前端使用 Streamlit，能載入範例 FAQ 或使用者上傳的 PDF／CSV，將文件切分後透過 OpenAI Embeddings 建立 FAISS 向量索引，再檢索相關片段交給語言模型回答。後端使用 FastAPI、SQLAlchemy、Alembic 與 Neon PostgreSQL，已完成 Argon2 密碼雜湊、JWT 身分驗證，以及具備使用者資料隔離的 Conversation／Message 資料層與 CRUD API。GitHub Actions 會在 push 與 Pull Request 上分別執行前後端語法和測試。
+這是一個以 Python 開發的校園圖書館文件型 RAG 智能客服。前端使用 Streamlit，能載入範例 FAQ 或使用者上傳的 PDF／CSV，將文件切分後透過 OpenAI Embeddings 建立 FAISS 向量索引，再檢索相關片段交給語言模型回答。後端使用 FastAPI、SQLAlchemy、Alembic 與 Neon PostgreSQL，已完成 Argon2 密碼雜湊、JWT 身分驗證，以及具備使用者資料隔離的 Conversation／Message 資料層與 CRUD API。後端已透過 Render Blueprint 部署至 Singapore，GitHub Actions required checks 通過後由 `main` 自動部署。
 
 面試時可以用以下四點快速建立脈絡：
 
@@ -33,8 +33,9 @@
 | Conversation data foundation | 已完成 | ORM、migration、schemas、owner-filtered repositories、85 項後端測試時完成 |
 | Conversation CRUD API | 已完成 | 7 個受 JWT 保護的 CRUD／Message endpoints、20 項 API tests、Neon development smoke test |
 | Streamlit 身分驗證 UI | 已完成 | register、login、logout、Bearer `/auth/me`、安全錯誤呈現、31 項前端測試與瀏覽器 E2E |
-| Streamlit 持久化對話歷史 | 規劃中 | 尚未完成，不在面試中宣稱已實作 |
-| Render、Redis | 規劃中 | 尚未完成，不在面試中宣稱已部署或使用 |
+| Streamlit 持久化對話歷史 | 已完成 | 登入後可建立、切換、改名、刪除及重新載入個人 RAG 對話；前端 47、後端 108 項測試 |
+| Render 後端部署 | 已完成 | Singapore Blueprint、Alembic、公開 HTTPS、health／Swagger／Auth／Conversation production smoke test |
+| Redis／observability | 規劃中 | 尚未完成，不在面試中宣稱已使用 |
 
 ## 4. 整體架構
 
@@ -62,6 +63,10 @@ GitHub Pull Request
 GitHub Actions 前後端 CI
   ↓
 protected main
+  ↓ checks passed
+Render Blueprint（Singapore）
+  ↓ Alembic upgrade head → Uvicorn
+Neon production
 ```
 
 ### 為什麼前後端分離？
@@ -659,7 +664,7 @@ Endpoint 不需要為測試寫特殊分支。FastAPI override 可以替換 datab
 
 ### Q9：如果要擴充到正式服務，下一步是什麼？
 
-Streamlit JWT 與個人對話持久化已完成；接下來是 Render backend、Streamlit Cloud 部署後 E2E 驗收，再加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
+Streamlit JWT、個人對話持久化與 Render backend 已完成；接下來是 Streamlit Cloud 串接正式後端的 E2E 驗收，再加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
 
 ### Q10：你如何證明不是只把套件拼在一起？
 
@@ -746,7 +751,35 @@ login 只證明帳密驗證成功並取得 token；`/auth/me` 會用相同 Beare
 - 面試可說重點：跨層資料流、owner isolation、partial failure、retry、response contract validation、真實雙帳號 E2E。
 - 仍未完成：Render backend、Streamlit Cloud 部署後 E2E、Redis rate limiting、observability 與 refresh token。
 
-## 22. 每階段更新模板
+## 22. Render 後端部署階段紀錄
+
+- 階段名稱：Render 後端部署。
+- 完成日期：2026-08-12。
+- 功能與使用者價值：FastAPI 透過公開 HTTPS 提供 Auth 與個人 Conversation API，前端不再依賴本機 Uvicorn。
+- 新增技術：Render Blueprint、Infrastructure as Code、Singapore region、health check、main checks-passed auto deploy、Neon pooled／direct URLs、production smoke test。
+- 資料流：GitHub protected main → required CI → Render build → Alembic `upgrade head` → Uvicorn → Neon production。
+- 安全設計：資料庫 URL 與 JWT secret 只存在 Render environment；JWT secret 使用平台秘密管理；測試 token 暴露後立即輪替 secret、重新部署並刪除臨時帳號。
+- 測試與驗證數字：公開 `/health`、`/docs` 為 200；register 201、login／`/auth/me` 200；Conversation／Message CRUD 成功；刪除後 resource 404、帳號登入 401。
+- 遇到的問題與解法：Neon URL 若保留 `postgresql://`，SQLAlchemy 會嘗試載入 `psycopg2`；改用 `postgresql+psycopg://` 明確選擇已安裝的 psycopg 3 driver。Blueprint region 另以小型 PR 固定為 `singapore`。
+- 設計取捨：Free instance 會休眠並有 cold start；migration 與 Uvicorn 串在同一啟動命令適合單 instance 展示版，多 instance 應使用獨立 release job。
+- 面試可說重點：IaC、CI 與 CD 的邊界、driver dialect、pooled／direct connection 分工、migration ordering、secret rotation、production smoke test 與測試資料清理。
+- 仍未完成：Streamlit Cloud 正式前後端 E2E、Redis rate limiting、observability、refresh token 與備份策略。
+
+### Render 部署常見追問
+
+**為什麼 `DATABASE_URL` 與 `DIRECT_DATABASE_URL` 分開？**
+
+一般 API 查詢使用 Neon pooled connection，較適合短連線與併發；Alembic migration 需要穩定的 session-level connection，因此使用 direct URL。兩者用途不同，但都不提交 Git。
+
+**為什麼啟動順序是 migration 再 Uvicorn？**
+
+新程式可能依賴新欄位或資料表。先成功升級 schema，再讓服務接受流量，可避免程式版本與 schema 不一致。`&&` 也確保 migration 失敗時不會啟動一個結構不相容的服務。
+
+**如何處理部署後機密暴露？**
+
+不只刪除畫面或測試資料，而是把憑證視為已失陷：輪替 JWT secret、觸發重新部署使舊 token 失效、刪除臨時帳號／對話，最後重新驗證 health 與拒絕登入。
+
+## 23. 每階段更新模板
 
 階段完成後，在本文件更新：
 
