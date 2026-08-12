@@ -143,7 +143,8 @@ chunk 太大會混入過多不相關內容並增加 token；太小則可能切�
 
 - `format_history()` 取最後六則訊息，也就是約三組問答。
 - 目的是支援「那週末呢？」這類追問，同時避免 prompt 無限增長。
-- 目前只存在 `st.session_state`，重新開啟工作階段不會保留；後續才接 FastAPI 對話歷史。
+- 完整訊息會保存到 FastAPI／PostgreSQL；每次產生 prompt 時仍只取最近六則，避免持久化歷史讓 token 無限制成長。
+- 瀏覽器整頁重新整理後需重新登入，但登入完成會依 active conversation 從 API 還原歷史。
 
 ## 6. Streamlit 知識
 
@@ -153,6 +154,8 @@ chunk 太大會混入過多不相關內容並增加 token；太小則可能切�
 
 - access token 與 `/auth/me` 回傳的安全使用者欄位
 - messages
+- conversation list、active／loaded conversation ID
+- 尚未成功持久化的 assistant retry payload
 - question count
 - token count
 - active source ID／name
@@ -196,10 +199,31 @@ Streamlit 每次互動會重新執行 script，因此需要 `st.session_state` �
 - 401、409、422、timeout、connection error 會轉成不洩漏內部 response 或 stack trace 的前端錯誤。
 - 登入 response 除了 200，還會驗證 `access_token` 非空且 `token_type` 為 `bearer`。
 - `frontend_auth.py` 將純 session-state 規則與 Streamlit widget 分離，讓登入狀態能以單元測試驗證。
+- `frontend_conversations.py` 將 Conversation／Message response 白名單、active selection、history 載入與登出清理分離成可測試的純 Python helper。
+- protected path 中的 UUID 會先解析並正規化，避免任意字串成為 URL path fragment。
 
 ### 6.6 為什麼回答完成後不再呼叫 `st.rerun()`？
 
 `st.chat_input` 送出本身已啟動一次 script run。回答完成後再次強制 rerun，固定在底部的輸入元件可能重新錨定捲動位置，造成使用者從底部往上閱讀時被拉回。現在使用 `st.empty()` 預留統計元件並直接更新 metric，不需要整頁再次 rerun；瀏覽器驗收確認由底部向上捲動後位置保持穩定。
+
+### 6.7 個人對話持久化資料流
+
+```text
+登入使用者選擇 Conversation
+  → GET /conversations/{id}/messages
+  → 轉換成 st.session_state.messages
+  → 使用者送出問題
+  → 先 POST user message
+  → RAG 檢索與回答
+  → POST assistant message
+```
+
+- sidebar 支援建立、切換、改名與刪除自己的對話。
+- 沒有 active conversation 時，以第一個問題自動產生最多 60 字元標題。
+- user message 保存失敗時不呼叫 OpenAI，避免付費產生一個無法追溯的回答。
+- RAG 成功但 assistant message 保存失敗時，畫面保留答案並保存 retry payload，讓使用者補寫，而不是誤稱已持久化。
+- 對話切換時只載入該 Conversation 的 messages；後端 owner-filtered query 是真正授權邊界。
+- token 數沒有寫入 Message table，因此重新載入歷史後 token metric 從 0 開始，避免虛構數字。
 
 ## 7. FastAPI 分層
 
@@ -210,6 +234,7 @@ Streamlit 每次互動會重新執行 script，因此需要 `st.session_state` �
 - `main.py` 建立 app 並 `include_router()`。
 - `tags` 用於 Swagger 分組。
 - `response_model` 定義對外輸出契約。
+- `/messages/assistant` 使用 dedicated endpoint，由伺服器固定 `role="assistant"`；一般 Message payload 仍不能注入 role。
 
 ### 7.2 Dependency Injection
 
@@ -634,7 +659,7 @@ Endpoint 不需要為測試寫特殊分支。FastAPI override 可以替換 datab
 
 ### Q9：如果要擴充到正式服務，下一步是什麼？
 
-Streamlit JWT integration 已完成；接下來是把 RAG 問答寫入個人 Conversation／Message API、Render backend 與部署後 E2E 驗收，再加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
+Streamlit JWT 與個人對話持久化已完成；接下來是 Render backend、Streamlit Cloud 部署後 E2E 驗收，再加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
 
 ### Q10：你如何證明不是只把套件拼在一起？
 
@@ -647,6 +672,14 @@ login 只證明帳密驗證成功並取得 token；`/auth/me` 會用相同 Beare
 ### Q12：為什麼不用瀏覽器 localStorage 長期保存 JWT？
 
 第一版把 JWT 限制在 Streamlit server-side session state，瀏覽器整頁重新整理後重新登入。localStorage 容易被同源 XSS 讀取；自製 cookie 若沒有 HttpOnly、Secure、SameSite 與 CSRF 設計也可能更危險。正式版若要求長期登入，會優先設計後端管理的安全 cookie、短效 access token、refresh rotation 與撤銷機制。
+
+### Q13：如何處理「問題已存，但 AI 回答沒存」的不一致？
+
+先保存 user message，成功後才呼叫 RAG；這確保每次付費回答都有可追溯問題。若 RAG 本身失敗，資料庫保留問題並顯示錯誤；若回答成功但第二次 API 寫入失敗，前端保留畫面答案及 pending retry payload，讓使用者補存。正式系統可把 RAG 搬到後端，以 job/outbox/idempotency key 進一步做到可靠重試。
+
+### Q14：assistant endpoint 是否代表使用者不能偽造 AI 回答？
+
+目前 request 不能直接注入 `role`，角色由 dedicated endpoint 固定；owner isolation 也能防止寫入別人的對話。不過只靠使用者 JWT 不能證明內容真的由模型產生，因此這是個人歷史資料的 MVP integrity 取捨。若回答要作為稽核證據，應由後端執行 RAG，或加入服務對服務驗證與不可由瀏覽器取得的憑證。
 
 ## 19. 可使用的 STAR 故事
 
@@ -678,6 +711,13 @@ login 只證明帳密驗證成功並取得 token；`/auth/me` 會用相同 Beare
 - Action：追蹤回答完成後的控制流程，發現 `st.chat_input` 已觸發一次 run，程式卻又呼叫 `st.rerun()`；移除第二次整頁 rerun，改用 `st.empty()` placeholder 更新問題數和 token metric。
 - Result：31 項前端測試通過，瀏覽器實測由底部向上捲動後位置保持穩定，也減少不必要的整頁重算。
 
+### 故事五：讓 RAG 對話跨工作階段保存
+
+- Situation：原本問答只存在 Streamlit session，使用者無法管理或重新載入歷史。
+- Task：串接既有 Conversation／Message API，同時維持多帳號 owner isolation 並處理兩段式寫入失敗。
+- Action：建立可測試的 API/state adapters；先存 user message 再呼叫 RAG；用 dedicated endpoint 保存 assistant；加入 retry payload；以兩個真實帳號驗證重載、切換、改名、刪除與隔離。
+- Result：真實 RAG 問答可在重新登入後還原，第二帳號看到空清單；前端 47、後端 108 項自動測試通過。
+
 ## 20. Streamlit 身分驗證 UI 階段紀錄
 
 - 階段名稱：Streamlit 身分驗證 UI
@@ -692,7 +732,21 @@ login 只證明帳密驗證成功並取得 token；`/auth/me` 會用相同 Beare
 - 面試可說重點：前後端 HTTP 契約、安全 token state、錯誤分層、mocked HTTP boundary、Streamlit rerun model 與真實瀏覽器驗收。
 - 仍未完成：RAG 對話持久化串接、Render backend、部署後 E2E、Redis rate limiting。
 
-## 21. 每階段更新模板
+## 21. Streamlit RAG 個人對話持久化階段紀錄
+
+- 階段名稱：Streamlit RAG 個人對話持久化
+- 完成日期：2026-08-12
+- 功能與使用者價值：登入者可建立、切換、改名、刪除自己的對話；RAG 問題與回答可在重新登入後還原。
+- 新增技術：Conversation／Message HTTP client、JSON list／204 response contracts、UUID path validation、Streamlit conversation state helper、assistant retry state。
+- 資料流：sidebar selection → owner-filtered Conversation API → Message history → `st.session_state` → user message → RAG → assistant message。
+- 安全設計：所有呼叫沿用 Bearer JWT；401 清除帳號與 workspace；404 不區分不存在與別人資源；登出清除 conversation IDs、history 與 pending answer；request 不能注入 role。
+- 測試與驗證數字：47 項前端測試、108 項後端測試；真實瀏覽器與 Neon development 完成 RAG 問答、重載、切換、改名、刪除及兩帳號隔離，兩個臨時帳號已刪除。
+- 遇到的問題與解法：持久化歷史在 main body 載入後，sidebar metric 初值仍是 0；沿用 `st.empty()` placeholder 在載入後更新，而不新增整頁 rerun。
+- 設計取捨：Message table 不保存 token usage；重載後 token metric 歸零。assistant endpoint 適合個人歷史 MVP，但不是模型來源的不可否認證明。
+- 面試可說重點：跨層資料流、owner isolation、partial failure、retry、response contract validation、真實雙帳號 E2E。
+- 仍未完成：Render backend、Streamlit Cloud 部署後 E2E、Redis rate limiting、observability 與 refresh token。
+
+## 22. 每階段更新模板
 
 階段完成後，在本文件更新：
 

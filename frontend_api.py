@@ -1,5 +1,6 @@
 """HTTP client used by the Streamlit frontend to call the FastAPI backend."""
 
+import uuid
 from typing import Any
 
 import requests
@@ -100,8 +101,100 @@ def request_json(
 ) -> dict[str, Any]:
     """Send one backend request and require a JSON object response."""
 
-    request_url = f"{normalize_base_url(base_url)}{path}"
+    response = _send_request(
+        method=method,
+        path=path,
+        base_url=base_url,
+        json_body=json_body,
+        headers=headers,
+    )
 
+    try:
+        response_data = response.json()
+    except ValueError as error:
+        raise BackendAPIError(
+            "Backend returned an invalid JSON response.",
+            status_code=response.status_code,
+        ) from error
+
+    # Auth 與單筆 Conversation／Message endpoints 都應回 JSON object。
+    if not isinstance(response_data, dict):
+        raise BackendAPIError(
+            "Backend returned an unexpected JSON response.",
+            status_code=response.status_code,
+        )
+
+    return response_data
+
+
+def request_json_list(
+    method: str,
+    path: str,
+    base_url: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Send one backend request and require a list of JSON objects."""
+
+    response = _send_request(
+        method=method,
+        path=path,
+        base_url=base_url,
+        headers=headers,
+    )
+
+    try:
+        response_data = response.json()
+    except ValueError as error:
+        raise BackendAPIError(
+            "Backend returned an invalid JSON response.",
+            status_code=response.status_code,
+        ) from error
+
+    if not isinstance(response_data, list) or not all(
+        isinstance(item, dict) for item in response_data
+    ):
+        raise BackendAPIError(
+            "Backend returned an unexpected JSON response.",
+            status_code=response.status_code,
+        )
+
+    return response_data
+
+
+def request_no_content(
+    method: str,
+    path: str,
+    base_url: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> None:
+    """Send a request whose successful contract is HTTP 204 with no body."""
+
+    response = _send_request(
+        method=method,
+        path=path,
+        base_url=base_url,
+        headers=headers,
+    )
+    if response.status_code != 204:
+        raise BackendAPIError(
+            "Backend returned an unexpected success status.",
+            status_code=response.status_code,
+        )
+
+
+def _send_request(
+    method: str,
+    path: str,
+    base_url: str,
+    *,
+    json_body: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
+) -> requests.Response:
+    """Share safe network and non-2xx handling across response shapes."""
+
+    request_url = f"{normalize_base_url(base_url)}{path}"
     try:
         response = requests.request(
             method=method,
@@ -111,8 +204,6 @@ def request_json(
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except requests.RequestException as error:
-        # 網路錯誤不應把底層 exception、網址參數或環境資訊
-        # 直接顯示在 Streamlit 畫面。
         raise BackendAPIError(
             "Unable to connect to the backend."
         ) from error
@@ -123,22 +214,26 @@ def request_json(
             status_code=response.status_code,
         )
 
+    return response
+
+
+def bearer_headers(access_token: str) -> dict[str, str]:
+    """Build the shared Authorization header for protected endpoints."""
+
+    normalized_token = access_token.strip()
+    if not normalized_token:
+        raise ValueError("Access token cannot be empty.")
+
+    return {"Authorization": f"Bearer {normalized_token}"}
+
+
+def normalize_resource_id(resource_id: str) -> str:
+    """Require a UUID before placing a resource identifier in a URL path."""
+
     try:
-        response_data = response.json()
-    except ValueError as error:
-        raise BackendAPIError(
-            "Backend returned an invalid JSON response.",
-            status_code=response.status_code,
-        ) from error
-
-    # 目前 Auth endpoints 都應回傳 JSON object，而不是 list。
-    if not isinstance(response_data, dict):
-        raise BackendAPIError(
-            "Backend returned an unexpected JSON response.",
-            status_code=response.status_code,
-        )
-
-    return response_data
+        return str(uuid.UUID(resource_id))
+    except (ValueError, AttributeError) as error:
+        raise ValueError("Resource ID must be a valid UUID.") from error
 
 
 def register_user(
@@ -200,16 +295,110 @@ def fetch_current_user(
 ) -> dict[str, Any]:
     """Use a bearer token to retrieve the authenticated user."""
 
-    normalized_token = access_token.strip()
-
-    if not normalized_token:
-        raise ValueError("Access token cannot be empty.")
-
     return request_json(
         method="GET",
         path="/auth/me",
         base_url=base_url,
-        headers={
-            "Authorization": f"Bearer {normalized_token}",
-        },
+        headers=bearer_headers(access_token),
+    )
+
+
+def create_conversation(
+    base_url: str,
+    access_token: str,
+    title: str,
+) -> dict[str, Any]:
+    """Create one conversation owned by the authenticated user."""
+
+    return request_json(
+        method="POST",
+        path="/conversations",
+        base_url=base_url,
+        json_body={"title": title},
+        headers=bearer_headers(access_token),
+    )
+
+
+def list_conversations(
+    base_url: str,
+    access_token: str,
+) -> list[dict[str, Any]]:
+    """List only the authenticated user's conversations."""
+
+    return request_json_list(
+        method="GET",
+        path="/conversations",
+        base_url=base_url,
+        headers=bearer_headers(access_token),
+    )
+
+
+def rename_conversation(
+    base_url: str,
+    access_token: str,
+    conversation_id: str,
+    title: str,
+) -> dict[str, Any]:
+    """Rename an owned conversation."""
+
+    safe_id = normalize_resource_id(conversation_id)
+    return request_json(
+        method="PATCH",
+        path=f"/conversations/{safe_id}",
+        base_url=base_url,
+        json_body={"title": title},
+        headers=bearer_headers(access_token),
+    )
+
+
+def delete_conversation(
+    base_url: str,
+    access_token: str,
+    conversation_id: str,
+) -> None:
+    """Delete an owned conversation and its dependent messages."""
+
+    safe_id = normalize_resource_id(conversation_id)
+    request_no_content(
+        method="DELETE",
+        path=f"/conversations/{safe_id}",
+        base_url=base_url,
+        headers=bearer_headers(access_token),
+    )
+
+
+def list_messages(
+    base_url: str,
+    access_token: str,
+    conversation_id: str,
+) -> list[dict[str, Any]]:
+    """Load ordered messages from one owned conversation."""
+
+    safe_id = normalize_resource_id(conversation_id)
+    return request_json_list(
+        method="GET",
+        path=f"/conversations/{safe_id}/messages",
+        base_url=base_url,
+        headers=bearer_headers(access_token),
+    )
+
+
+def create_message(
+    base_url: str,
+    access_token: str,
+    conversation_id: str,
+    content: str,
+    *,
+    assistant: bool = False,
+) -> dict[str, Any]:
+    """Persist a user question or a server-generated assistant answer."""
+
+    safe_id = normalize_resource_id(conversation_id)
+    suffix = "/assistant" if assistant else ""
+    return request_json(
+        method="POST",
+        path=f"/conversations/{safe_id}/messages{suffix}",
+        base_url=base_url,
+        json_body={"content": content},
+        headers=bearer_headers(access_token),
     )

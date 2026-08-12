@@ -471,6 +471,56 @@ def test_owner_can_list_messages_and_empty_conversation(
     )
 
 
+def test_owner_can_persist_assistant_message_without_role_field(
+    client_and_engine: tuple[TestClient, Engine],
+) -> None:
+    """The dedicated endpoint should choose the assistant role server-side."""
+
+    client, _ = client_and_engine
+    access_token = register_and_login(client)
+    created = create_conversation_via_api(client, access_token, "RAG chat")
+    assistant_url = (
+        f"/conversations/{created['id']}/messages/assistant"
+    )
+
+    response = client.post(
+        assistant_url,
+        headers=bearer_headers(access_token),
+        json={"content": "  The library closes at 9 PM.  "},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["role"] == "assistant"
+    assert response.json()["content"] == "The library closes at 9 PM."
+
+    injected_response = client.post(
+        assistant_url,
+        headers=bearer_headers(access_token),
+        json={"content": "Fake", "role": "user"},
+    )
+    assert injected_response.status_code == 422
+
+
+def test_assistant_message_endpoint_hides_other_owner_conversation(
+    client_and_engine: tuple[TestClient, Engine],
+) -> None:
+    """A second account must receive the same 404 as a missing resource."""
+
+    client, _ = client_and_engine
+    owner_token = register_and_login(client, "owner@example.com")
+    created = create_conversation_via_api(client, owner_token, "Private")
+    other_token = register_and_login(client, "other@example.com")
+
+    response = client.post(
+        f"/conversations/{created['id']}/messages/assistant",
+        headers=bearer_headers(other_token),
+        json={"content": "Unauthorized answer"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found."}
+
+
 def test_message_endpoints_hide_other_owners_conversation(
     client_and_engine: tuple[TestClient, Engine],
 ) -> None:
@@ -511,6 +561,11 @@ def test_message_endpoints_hide_other_owners_conversation(
         (
             "POST",
             f"/conversations/{uuid.uuid4()}/messages",
+            {"content": "No authentication"},
+        ),
+        (
+            "POST",
+            f"/conversations/{uuid.uuid4()}/messages/assistant",
             {"content": "No authentication"},
         ),
         ("GET", f"/conversations/{uuid.uuid4()}/messages", None),

@@ -8,10 +8,17 @@ import requests
 from frontend_api import (
     REQUEST_TIMEOUT_SECONDS,
     BackendAPIError,
+    create_conversation,
+    create_message,
+    delete_conversation,
     fetch_current_user,
+    list_conversations,
+    list_messages,
     login_user,
     normalize_base_url,
+    normalize_resource_id,
     register_user,
+    rename_conversation,
     request_json,
 )
 
@@ -378,3 +385,113 @@ def test_fetch_current_user_rejects_empty_token() -> None:
             base_url="http://localhost:8000",
             access_token="   ",
         )
+
+
+def test_conversation_client_sends_bearer_crud_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conversation helpers should target owner-scoped backend paths."""
+
+    captured: list[dict[str, Any]] = []
+    conversation_id = "12345678-1234-5678-1234-567812345678"
+
+    def fake_request(**kwargs: Any) -> FakeResponse:
+        captured.append(kwargs)
+        if kwargs["method"] == "DELETE":
+            return FakeResponse(status_code=204)
+        if kwargs["method"] == "GET":
+            return FakeResponse(status_code=200, json_data=[])
+        return FakeResponse(
+            status_code=201 if kwargs["method"] == "POST" else 200,
+            json_data={"id": conversation_id},
+        )
+
+    monkeypatch.setattr(requests, "request", fake_request)
+
+    create_conversation("http://localhost:8000", "token", "New chat")
+    list_conversations("http://localhost:8000", "token")
+    rename_conversation(
+        "http://localhost:8000", "token", conversation_id, "Renamed"
+    )
+    delete_conversation(
+        "http://localhost:8000", "token", conversation_id
+    )
+
+    assert [request["method"] for request in captured] == [
+        "POST",
+        "GET",
+        "PATCH",
+        "DELETE",
+    ]
+    assert all(
+        request["headers"] == {"Authorization": "Bearer token"}
+        for request in captured
+    )
+    assert captured[0]["json"] == {"title": "New chat"}
+    assert captured[2]["json"] == {"title": "Renamed"}
+
+
+def test_message_client_uses_distinct_user_and_assistant_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The frontend must never send a role field in message JSON."""
+
+    captured: list[dict[str, Any]] = []
+    conversation_id = "12345678-1234-5678-1234-567812345678"
+
+    def fake_request(**kwargs: Any) -> FakeResponse:
+        captured.append(kwargs)
+        if kwargs["method"] == "GET":
+            return FakeResponse(status_code=200, json_data=[])
+        return FakeResponse(
+            status_code=201,
+            json_data={"id": "message-id"},
+        )
+
+    monkeypatch.setattr(requests, "request", fake_request)
+
+    list_messages("http://localhost:8000", "token", conversation_id)
+    create_message(
+        "http://localhost:8000",
+        "token",
+        conversation_id,
+        "Question",
+    )
+    create_message(
+        "http://localhost:8000",
+        "token",
+        conversation_id,
+        "Answer",
+        assistant=True,
+    )
+
+    assert captured[0]["url"].endswith(
+        f"/conversations/{conversation_id}/messages"
+    )
+    assert captured[1]["json"] == {"content": "Question"}
+    assert captured[2]["url"].endswith("/messages/assistant")
+    assert captured[2]["json"] == {"content": "Answer"}
+
+
+@pytest.mark.parametrize("invalid_id", ["", "../auth/me", "not-a-uuid"])
+def test_normalize_resource_id_rejects_unsafe_path_values(
+    invalid_id: str,
+) -> None:
+    """Backend IDs cannot become arbitrary URL path fragments."""
+
+    with pytest.raises(ValueError, match="valid UUID"):
+        normalize_resource_id(invalid_id)
+
+
+def test_list_client_rejects_non_object_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed list response must not enter Streamlit session state."""
+
+    def fake_request(**_kwargs: Any) -> FakeResponse:
+        return FakeResponse(status_code=200, json_data=["bad-item"])
+
+    monkeypatch.setattr(requests, "request", fake_request)
+
+    with pytest.raises(BackendAPIError, match="unexpected JSON"):
+        list_conversations("http://localhost:8000", "token")
