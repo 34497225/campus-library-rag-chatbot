@@ -32,7 +32,8 @@
 | Auth foundation | 已完成 | register、login、me、Argon2id、JWT、55 項後端測試時完成 |
 | Conversation data foundation | 已完成 | ORM、migration、schemas、owner-filtered repositories、85 項後端測試時完成 |
 | Conversation CRUD API | 已完成 | 7 個受 JWT 保護的 CRUD／Message endpoints、20 項 API tests、Neon development smoke test |
-| Streamlit 登入與持久化歷史 | 規劃中 | 尚未完成，不在面試中宣稱已實作 |
+| Streamlit 身分驗證 UI | 已完成 | register、login、logout、Bearer `/auth/me`、安全錯誤呈現、31 項前端測試與瀏覽器 E2E |
+| Streamlit 持久化對話歷史 | 規劃中 | 尚未完成，不在面試中宣稱已實作 |
 | Render、Redis | 規劃中 | 尚未完成，不在面試中宣稱已部署或使用 |
 
 ## 4. 整體架構
@@ -46,7 +47,7 @@ Streamlit
   ├─ FAISS similarity search
   └─ OpenAI Chat Model
 
-Streamlit（後續串接）
+Streamlit
   ↓ HTTP + Bearer JWT
 FastAPI
   ├─ Router／Pydantic schemas
@@ -150,6 +151,7 @@ chunk 太大會混入過多不相關內容並增加 token；太小則可能切�
 
 保存：
 
+- access token 與 `/auth/me` 回傳的安全使用者欄位
 - messages
 - question count
 - token count
@@ -157,6 +159,10 @@ chunk 太大會混入過多不相關內容並增加 token；太小則可能切�
 - FAISS vector store
 
 Streamlit 每次互動會重新執行 script，因此需要 `st.session_state` 保存工作階段狀態。
+
+登入成功後，前端先取得 access token，再立刻用 Bearer token 呼叫 `/auth/me`。只有兩個步驟都成功，才把 token 與 `id`、`email`、`created_at` 放入 session state。密碼、password hash 與 JWT secret 永遠不進入前端 state。
+
+目前登入狀態只跨 Streamlit rerun 保存；瀏覽器整頁重新整理會建立新 session 並要求重新登入。這是第一版刻意的安全／複雜度取捨，沒有把 JWT 放進 URL、localStorage 或未設安全旗標的自製 cookie。
 
 ### 6.2 文件快取判斷
 
@@ -181,6 +187,19 @@ Streamlit 每次互動會重新執行 script，因此需要 `st.session_state` �
 - Unknown error。
 
 面試重點：不要把所有外部 API 失敗都說成金鑰錯誤；先辨認失敗層級。
+
+### 6.5 Streamlit 與 FastAPI 的 HTTP 邊界
+
+- `frontend_api.py` 集中處理 backend base URL、timeout、JSON 解析及 HTTP 錯誤。
+- base URL 會去除多餘 `/`，避免路徑組合錯誤。
+- requests timeout 固定為 10 秒，避免 UI 無限等待。
+- 401、409、422、timeout、connection error 會轉成不洩漏內部 response 或 stack trace 的前端錯誤。
+- 登入 response 除了 200，還會驗證 `access_token` 非空且 `token_type` 為 `bearer`。
+- `frontend_auth.py` 將純 session-state 規則與 Streamlit widget 分離，讓登入狀態能以單元測試驗證。
+
+### 6.6 為什麼回答完成後不再呼叫 `st.rerun()`？
+
+`st.chat_input` 送出本身已啟動一次 script run。回答完成後再次強制 rerun，固定在底部的輸入元件可能重新錨定捲動位置，造成使用者從底部往上閱讀時被拉回。現在使用 `st.empty()` 預留統計元件並直接更新 metric，不需要整頁再次 rerun；瀏覽器驗收確認由底部向上捲動後位置保持穩定。
 
 ## 7. FastAPI 分層
 
@@ -615,11 +634,19 @@ Endpoint 不需要為測試寫特殊分支。FastAPI override 可以替換 datab
 
 ### Q9：如果要擴充到正式服務，下一步是什麼？
 
-Conversation API 已完成；接下來是 Streamlit JWT integration、持久化歷史、Render backend 與 E2E 驗收，再加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
+Streamlit JWT integration 已完成；接下來是把 RAG 問答寫入個人 Conversation／Message API、Render backend 與部署後 E2E 驗收，再加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
 
 ### Q10：你如何證明不是只把套件拼在一起？
 
-說明實際處理的邊界：舊 LangChain tokenizer 問題用 adapter 解決；密碼 timing path 用 mock 測行為；owner isolation 放進 SQL WHERE；Alembic 在 Neon development 做往返驗證；CI 與 branch protection 把驗證納入合併流程。
+說明實際處理的邊界：舊 LangChain tokenizer 問題用 adapter 解決；密碼 timing path 用 mock 測行為；owner isolation 放進 SQL WHERE；Alembic 在 Neon development 做往返驗證；前端 HTTP failure 用 mock 隔離；捲動問題則定位為重複 rerun，改用 placeholder 局部更新；CI 與 branch protection 把驗證納入合併流程。
+
+### Q11：為什麼前端登入後還要呼叫 `/auth/me`？
+
+login 只證明帳密驗證成功並取得 token；`/auth/me` 會用相同 Bearer token 走後端真正的 JWT dependency，確認 token 能用並取得安全的使用者輸出。前端只有兩步都成功才建立 authenticated session，避免保存不完整或格式錯誤的 login response。
+
+### Q12：為什麼不用瀏覽器 localStorage 長期保存 JWT？
+
+第一版把 JWT 限制在 Streamlit server-side session state，瀏覽器整頁重新整理後重新登入。localStorage 容易被同源 XSS 讀取；自製 cookie 若沒有 HttpOnly、Secure、SameSite 與 CSRF 設計也可能更危險。正式版若要求長期登入，會優先設計後端管理的安全 cookie、短效 access token、refresh rotation 與撤銷機制。
 
 ## 19. 可使用的 STAR 故事
 
@@ -644,7 +671,28 @@ Conversation API 已完成；接下來是 Streamlit JWT integration、持久化�
 - Action：在 Neon development 產生並人工閱讀 migration，驗證 upgrade、downgrade、upgrade、current、check、foreign keys、indexes、check constraint 與 cascade。
 - Result：schema 與 ORM metadata 一致，且有可重現的 migration 紀錄。
 
-## 20. 每階段更新模板
+### 故事四：修正 Streamlit 捲動卡頓
+
+- Situation：使用者在對話頁面底部往上捲動時，畫面會卡頓或被拉回。
+- Task：找出是瀏覽器、CSS 還是 Streamlit execution model 導致。
+- Action：追蹤回答完成後的控制流程，發現 `st.chat_input` 已觸發一次 run，程式卻又呼叫 `st.rerun()`；移除第二次整頁 rerun，改用 `st.empty()` placeholder 更新問題數和 token metric。
+- Result：31 項前端測試通過，瀏覽器實測由底部向上捲動後位置保持穩定，也減少不必要的整頁重算。
+
+## 20. Streamlit 身分驗證 UI 階段紀錄
+
+- 階段名稱：Streamlit 身分驗證 UI
+- 完成日期：2026-08-12
+- 功能與使用者價值：使用者可在 Streamlit 註冊、登入、登出；未登入時無法使用 RAG 功能。
+- 新增技術：Python `requests`、Bearer JWT client、Streamlit forms／tabs／session state、HTTP adapter、mocked HTTP tests。
+- 資料流：表單 → `frontend_api.py` → FastAPI `/auth/*` → JWT → `/auth/me` → `frontend_auth.py` → `st.session_state`。
+- 安全設計：前端不保存密碼或 hash；只白名單保存安全 user fields；錯誤訊息不顯示後端內部內容；登出同時清除 authentication 與使用者 RAG workspace。
+- 測試與驗證數字：31 項前端測試、105 項後端測試；`pip check` 無破損依賴；瀏覽器完成 register、login、JWT `/auth/me`、功能解鎖、向上捲動穩定與 logout E2E。
+- 遇到的問題與解法：回答完成後重複 `st.rerun()` 讓底部 chat input 重設捲動；改用 placeholder 原地更新 sidebar metrics。
+- 設計取捨：JWT 僅保存在 Streamlit session；整頁重新整理後重新登入，暫不使用 localStorage、自製 cookie 或 refresh token。
+- 面試可說重點：前後端 HTTP 契約、安全 token state、錯誤分層、mocked HTTP boundary、Streamlit rerun model 與真實瀏覽器驗收。
+- 仍未完成：RAG 對話持久化串接、Render backend、部署後 E2E、Redis rate limiting。
+
+## 21. 每階段更新模板
 
 階段完成後，在本文件更新：
 
