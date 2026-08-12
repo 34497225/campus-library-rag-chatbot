@@ -19,6 +19,19 @@ from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 
+from frontend_api import (
+    BackendAPIError,
+    fetch_current_user,
+    login_user,
+    register_user,
+)
+from frontend_auth import (
+    clear_authentication,
+    initialize_auth_state,
+    is_authenticated,
+    store_authentication,
+)
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DEMO_LIBRARY_PATH = BASE_DIR / "knowledge_base" / "demo_library_faq.csv"
@@ -28,6 +41,15 @@ MAX_DOCUMENT_CHUNKS = 100
 MAX_QUESTIONS_PER_SESSION = 10
 
 load_dotenv()
+
+# Streamlit 前端不直接連資料庫，而是透過 FastAPI URL 使用後端功能。
+# 本機預設使用 http://localhost:8000；
+# 部署後可透過環境變數切換到 Render URL。
+BACKEND_API_URL = os.getenv(
+    "BACKEND_API_URL",
+    "http://localhost:8000",
+).strip()
+
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 TEXT = {
@@ -65,6 +87,28 @@ TEXT = {
         "invalid_key": "OPENAI_API_KEY 無效，請檢查 .env 中的新金鑰。",
         "rate_limit": "OpenAI API 已達速率或額度限制，請稍後重試並檢查 Usage Limits。",
         "connection": "無法連線至 OpenAI API，請檢查網路、防火牆或代理伺服器設定。",
+        "account": "帳號",
+        "login_tab": "登入",
+        "register_tab": "註冊",
+        "email": "Email",
+        "password": "密碼",
+        "confirm_password": "確認密碼",
+        "login": "登入",
+        "register": "建立帳號",
+        "logout": "登出",
+        "logged_in_as": "已登入：{email}",
+        "auth_required": "請先登入，才能使用文件問答功能。",
+        "login_success": "登入成功。",
+        "register_success": "註冊成功，請切換到登入頁籤。",
+        "password_mismatch": "兩次輸入的密碼不一致。",
+        "session_expired": "登入狀態已失效，請重新登入。",
+        "backend_not_configured": "尚未設定後端 API 網址。",
+        "backend_unavailable": "目前無法連線到後端服務，請稍後重試。",
+        "invalid_credentials": "Email 或密碼錯誤。",
+        "email_exists": "這個 Email 已經註冊。",
+        "invalid_auth_input": "輸入資料格式不正確，請檢查 Email 與密碼。",
+        "invalid_auth_response": "後端回傳的登入資料格式不正確。",
+        "auth_request_failed": "帳號請求失敗（HTTP {status}）。",
         "unknown": "{type}: {message}",
     },
     "en": {
@@ -101,6 +145,28 @@ TEXT = {
         "invalid_key": "OPENAI_API_KEY is invalid. Check the new key in .env.",
         "rate_limit": "The OpenAI API rate or usage limit was reached. Try again later and check Usage Limits.",
         "connection": "Unable to connect to the OpenAI API. Check the network, firewall, or proxy settings.",
+        "account": "Account",
+        "login_tab": "Log in",
+        "register_tab": "Register",
+        "email": "Email",
+        "password": "Password",
+        "confirm_password": "Confirm password",
+        "login": "Log in",
+        "register": "Create account",
+        "logout": "Log out",
+        "logged_in_as": "Signed in as: {email}",
+        "auth_required": "Log in to use the document Q&A features.",
+        "login_success": "Login successful.",
+        "register_success": "Registration successful. Switch to the login tab.",
+        "password_mismatch": "The passwords do not match.",
+        "session_expired": "Your login session is no longer valid. Log in again.",
+        "backend_not_configured": "The backend API URL is not configured.",
+        "backend_unavailable": "The backend service is currently unavailable. Try again later.",
+        "invalid_credentials": "The email or password is incorrect.",
+        "email_exists": "This email is already registered.",
+        "invalid_auth_input": "The input is invalid. Check the email and password.",
+        "invalid_auth_response": "The backend returned invalid login data.",
+        "auth_request_failed": "The account request failed (HTTP {status}).",
         "unknown": "{type}: {message}",
     },
 }
@@ -132,16 +198,20 @@ Latest question: {question}
 def t(language: str, key: str, **values: str) -> str:
     return TEXT[language][key].format(**values)
 
+
 def validate_file_size(file_size_bytes: int) -> None:
     if file_size_bytes > MAX_FILE_SIZE_BYTES:
         raise ValueError("file_too_large")
+
 
 def validate_chunk_count(chunk_count: int) -> None:
     if chunk_count > MAX_DOCUMENT_CHUNKS:
         raise ValueError("too_many_chunks")
 
+
 def has_reached_question_limit(question_count: int) -> bool:
     return question_count >= MAX_QUESTIONS_PER_SESSION
+
 
 class DirectOpenAIEmbeddings(Embeddings):
     """Small adapter that avoids the legacy LangChain tokenizer download."""
@@ -260,6 +330,10 @@ def conversation_markdown(messages: List[Dict[str, object]], source_name: str) -
 
 
 def initialize_state() -> None:
+    # 登入狀態和 RAG 狀態分別由各自的 helper 初始化。
+    # 函式只會補上不存在的 key，不會在 Streamlit rerun 時清除登入。
+    initialize_auth_state(st.session_state)
+
     defaults = {
         "messages": [],
         "question_count": 0,
@@ -273,10 +347,219 @@ def initialize_state() -> None:
             st.session_state[key] = value
 
 
+def validate_authentication_session() -> bool:
+    """Validate stored login data against FastAPI's /auth/me endpoint."""
+
+    if not is_authenticated(st.session_state):
+        return False
+
+    access_token = st.session_state.access_token
+
+    try:
+        # 不只相信前端 session 中已有 current_user，
+        # 而是向後端確認 token 仍有效、使用者仍存在。
+        current_user = fetch_current_user(
+            base_url=BACKEND_API_URL,
+            access_token=access_token,
+        )
+    except BackendAPIError as error:
+        if error.status_code == 401:
+            # 401 代表 token 過期、無效或使用者已不存在。
+            # 清除失效憑證，讓畫面回到登入狀態。
+            clear_authentication(st.session_state)
+            return False
+
+        # 後端斷線或 5xx 不代表 JWT 一定無效，
+        # 因此保留 session，交給 UI 顯示服務暫時不可用。
+        raise
+
+    # 重新保存後端回傳的安全使用者資料，
+    # 同時沿用 helper 的欄位白名單。
+    store_authentication(
+        state=st.session_state,
+        access_token=access_token,
+        user=current_user,
+    )
+
+    return True
+
+
+def authentication_error_message(
+    error: BackendAPIError,
+    language: str,
+) -> str:
+    """Convert backend authentication failures into safe UI messages."""
+
+    if error.status_code is None:
+        return t(language, "backend_unavailable")
+
+    if error.status_code == 401:
+        return t(language, "invalid_credentials")
+
+    if error.status_code == 409:
+        return t(language, "email_exists")
+
+    if error.status_code == 422:
+        return t(language, "invalid_auth_input")
+
+    return t(
+        language,
+        "auth_request_failed",
+        status=str(error.status_code),
+    )
+
+
 def reset_conversation() -> None:
     st.session_state.messages = []
     st.session_state.question_count = 0
     st.session_state.total_tokens = 0
+
+
+def reset_user_workspace() -> None:
+    """Clear user-specific RAG data when the user logs out."""
+
+    reset_conversation()
+
+    # 同一個瀏覽器工作階段可能換另一個帳號登入。
+    # 登出時清除文件索引與來源，避免下一位使用者沿用前一位的資料。
+    st.session_state.active_source_id = None
+    st.session_state.active_source_name = None
+    st.session_state.vector_store = None
+
+
+def render_authentication(language: str) -> bool:
+    """Render account controls and return whether the user is authenticated."""
+
+    st.subheader(t(language, "account"))
+
+    if not BACKEND_API_URL:
+        st.error(t(language, "backend_not_configured"))
+        return False
+
+    if is_authenticated(st.session_state):
+        try:
+            session_is_valid = validate_authentication_session()
+        except BackendAPIError as error:
+            # 網路或後端服務失敗時保留 token，
+            # 但暫停需要後端身分驗證的功能。
+            st.error(authentication_error_message(error, language))
+            return False
+
+        if session_is_valid:
+            current_user = st.session_state.current_user
+
+            st.success(
+                t(
+                    language,
+                    "logged_in_as",
+                    email=current_user["email"],
+                )
+            )
+
+            if st.button(t(language, "logout")):
+                clear_authentication(st.session_state)
+                reset_user_workspace()
+                st.rerun()
+
+            return True
+
+        # validate_authentication_session 已在 401 時清除失效 token。
+        st.warning(t(language, "session_expired"))
+
+    login_tab, register_tab = st.tabs(
+        [
+            t(language, "login_tab"),
+            t(language, "register_tab"),
+        ]
+    )
+
+    with login_tab:
+        with st.form("login_form"):
+            login_email = st.text_input(
+                t(language, "email"),
+                key="login_email",
+            )
+            login_password = st.text_input(
+                t(language, "password"),
+                type="password",
+                key="login_password",
+            )
+            login_submitted = st.form_submit_button(
+                t(language, "login")
+            )
+
+        if login_submitted:
+            try:
+                # 第一步取得 JWT。
+                token_response = login_user(
+                    base_url=BACKEND_API_URL,
+                    email=login_email,
+                    password=login_password,
+                )
+
+                # 第二步立即使用 JWT 呼叫 /auth/me。
+                # 只有 token 真正可用時，才保存登入狀態。
+                current_user = fetch_current_user(
+                    base_url=BACKEND_API_URL,
+                    access_token=token_response["access_token"],
+                )
+
+                store_authentication(
+                    state=st.session_state,
+                    access_token=token_response["access_token"],
+                    user=current_user,
+                )
+            except BackendAPIError as error:
+                st.error(
+                    authentication_error_message(error, language)
+                )
+            except ValueError:
+                st.error(t(language, "invalid_auth_response"))
+            else:
+                st.success(t(language, "login_success"))
+                st.rerun()
+
+    with register_tab:
+        with st.form("register_form"):
+            register_email = st.text_input(
+                t(language, "email"),
+                key="register_email",
+            )
+            register_password = st.text_input(
+                t(language, "password"),
+                type="password",
+                key="register_password",
+            )
+            confirm_password = st.text_input(
+                t(language, "confirm_password"),
+                type="password",
+                key="register_confirm_password",
+            )
+            register_submitted = st.form_submit_button(
+                t(language, "register")
+            )
+
+        if register_submitted:
+            if register_password != confirm_password:
+                # 確認密碼只屬於前端防呆，
+                # 不需要也不應送到 FastAPI。
+                st.error(t(language, "password_mismatch"))
+            else:
+                try:
+                    register_user(
+                        base_url=BACKEND_API_URL,
+                        email=register_email,
+                        password=register_password,
+                    )
+                except BackendAPIError as error:
+                    st.error(
+                        authentication_error_message(error, language)
+                    )
+                else:
+                    # 註冊不自動登入，讓登入與註冊責任保持清楚。
+                    st.success(t(language, "register_success"))
+
+    return False
 
 
 def set_source(source_id: str, source_name: str, documents: List[Document]) -> None:
@@ -297,13 +580,32 @@ def main() -> None:
         st.header(t(language, "about"))
         st.markdown(t(language, "about_body"))
         st.divider()
-        st.subheader(t(language, "stats"))
-        st.metric(t(language, "question_count"), st.session_state.question_count)
-        st.metric(t(language, "token_count"), st.session_state.total_tokens)
-        st.caption(t(language, "history_note"))
 
+        authenticated = render_authentication(language)
+
+        if authenticated:
+            st.divider()
+            st.subheader(t(language, "stats"))
+            # 用 placeholder 更新既有元件，不需要為了刷新統計而整頁重跑。
+            question_count_metric = st.empty()
+            token_count_metric = st.empty()
+            question_count_metric.metric(
+                t(language, "question_count"),
+                st.session_state.question_count,
+            )
+            token_count_metric.metric(
+                t(language, "token_count"),
+                st.session_state.total_tokens,
+            )
+            st.caption(t(language, "history_note"))
     st.title(t(language, "title"))
     st.caption(t(language, "subtitle"))
+
+    # 未登入時仍顯示系統介紹與帳號表單，
+    # 但不載入文件、不建立 embeddings，也不顯示聊天功能。
+    if not authenticated:
+        st.info(t(language, "auth_required"))
+        return
 
     if not os.getenv("OPENAI_API_KEY"):
         st.error(t(language, "missing_key"))
@@ -404,7 +706,19 @@ def main() -> None:
             )
             st.session_state.question_count += 1
             st.session_state.total_tokens += used_tokens
-            st.rerun()
+            # 直接更新側邊欄中的原有統計元件，避免用 st.rerun() 重新建立
+            # 整個頁面並干擾使用者正在閱讀的捲動位置。
+            question_count_metric.metric(
+                t(language, "question_count"),
+                st.session_state.question_count,
+            )
+            token_count_metric.metric(
+                t(language, "token_count"),
+                st.session_state.total_tokens,
+            )
+            # chat_input 送出時已經啟動這次腳本執行。回答完成後若再次
+            # st.rerun()，固定在頁面底部的輸入框會重新錨定捲動位置，
+            # 讓使用者往上閱讀對話時感覺被拉回或卡頓。
         except Exception as error:
             st.error(t(language, "answer_error", error=friendly_error(error, language)))
 
