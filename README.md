@@ -154,10 +154,10 @@ RATE_LIMIT_ENABLED=false
 ## 測試與品質檢查
 
 ```powershell
-# 前端：48 tests
+# 前端與 RAG evaluation helpers：54 tests
 .\.venv\Scripts\python.exe -m pytest tests -q
 
-# 後端：116 tests
+# 後端：119 tests
 .\.venv-backend\Scripts\python.exe -m pytest backend/tests -q
 
 .\.venv\Scripts\python.exe -m pip check
@@ -166,6 +166,11 @@ git diff --check
 ```
 
 測試使用 mocks 與隔離 SQLite，不連 production Neon，也不呼叫真實 OpenAI API。現有一項來自 FastAPI／Starlette TestClient 的棄用警告，不影響測試結果。
+
+真實模型的作品集評估另以 16 個中英文案例執行，涵蓋可回答問題與
+out-of-scope fallback；目前 Top-3 retrieval hit rate 為 100%，grounded
+answer pass rate 為 94%。完整方法、逐案結果與限制見
+[`docs/RAG_EVALUATION.md`](docs/RAG_EVALUATION.md)。
 
 ## 安全與可靠性設計
 
@@ -189,7 +194,7 @@ git diff --check
 
 ## 履歷描述範例
 
-> 開發並部署雙語 RAG 文件客服，使用 Streamlit、LangChain、FAISS 與 OpenAI 完成 PDF／CSV 語意檢索；以 FastAPI、SQLAlchemy、Alembic、Neon PostgreSQL 實作 Argon2id／JWT 身分驗證及 owner-scoped 個人對話持久化，並加入 Redis Lua 分散式限流、readiness、Request ID、JSON logs、116 項後端與 48 項前端測試，以及 GitHub Actions required CI／Render 自動部署流程。
+> 開發並部署雙語 RAG 文件客服，使用 Streamlit、LangChain、FAISS 與 OpenAI 完成 PDF／CSV 語意檢索；以 16 個雙語案例驗證 Top-3 retrieval 100% 與 grounded answer 94%；並以 FastAPI、SQLAlchemy、Alembic、Neon PostgreSQL 實作 Argon2id／JWT 身分驗證、owner-scoped 對話持久化及 Redis Lua 分散式限流，搭配 173 項自動測試與 GitHub Actions／Render 自動部署。
 
 ## License
 

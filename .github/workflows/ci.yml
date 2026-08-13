@@ -34,7 +34,7 @@ jobs:
           python -m pip install -r requirements-dev.txt
 
       - name: Check frontend Python syntax
-        run: python -m py_compile app.py
+        run: python -m py_compile app.py rag_evaluation.py
 
       - name: Run frontend unit tests
         run: python -m pytest tests -q

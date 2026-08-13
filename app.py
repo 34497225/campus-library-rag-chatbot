@@ -217,11 +217,10 @@ TEXT = {
 }
 
 PROMPT_TEMPLATE = """You are a friendly document-based customer-service assistant.
-Reply in the same language as the user's latest question.
-
-If the latest question is only a simple greeting (for example: hi, hello, 你好,
-哈囉), greet the user warmly and invite them to ask about the available library
-information. Do not say that you do not know for a greeting.
+The required response language is {response_language}. You MUST write the whole
+answer in that language, even when the document context contains other languages.
+The latest input below is a substantive question, not a greeting. Answer that
+question directly and do not replace the answer with a generic welcome message.
 
 For every other question, answer only from the supplied document context. If the
 context is insufficient, do not invent an answer and use a polite fallback in
@@ -343,17 +342,46 @@ def format_history(messages: List[Dict[str, object]]) -> str:
     return "\n".join(lines) or "(No previous conversation.)"
 
 
+def response_language_for(question: str) -> str:
+    """Choose a stable response language from the user's latest question.
+
+    The demo supports Traditional Chinese and English. Passing an explicit
+    language into the prompt prevents bilingual source rows from influencing
+    the model's output language.
+    """
+
+    has_cjk = any("\u4e00" <= char <= "\u9fff" for char in question)
+    return "Traditional Chinese" if has_cjk else "English"
+
+
+def greeting_response(question: str) -> str | None:
+    """Return a deterministic greeting only for an exact greeting phrase."""
+
+    normalized = question.strip().casefold().rstrip("!！.。?？")
+    if normalized in {"hi", "hello", "hey"}:
+        return "Hello! Ask me anything about the available library information."
+    if normalized in {"你好", "您好", "哈囉", "嗨"}:
+        return "您好！歡迎詢問文件中提供的圖書館資訊。"
+    return None
+
+
 def answer_question(
     vector_store: FAISS, question: str, messages: List[Dict[str, object]]
 ) -> Tuple[str, List[Document], int]:
+    greeting = greeting_response(question)
+    if greeting is not None:
+        return greeting, [], 0
+
     sources = vector_store.similarity_search(question, k=3)
     prompt = PromptTemplate(
         template=PROMPT_TEMPLATE,
-        input_variables=["context", "question", "history"],
+        input_variables=["context", "question", "history", "response_language"],
     )
     model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
     chain = load_qa_chain(
-        ChatOpenAI(model_name=model, temperature=0.2, max_tokens=800),
+        # Temperature zero makes factual customer-service answers and the
+        # version-controlled evaluation more repeatable.
+        ChatOpenAI(model_name=model, temperature=0, max_tokens=800),
         chain_type="stuff",
         prompt=prompt,
     )
@@ -362,6 +390,7 @@ def answer_question(
             input_documents=sources,
             question=question,
             history=format_history(messages),
+            response_language=response_language_for(question),
         )
     return answer, sources, callback.total_tokens
 

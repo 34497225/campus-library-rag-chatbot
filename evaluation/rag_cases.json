@@ -1,0 +1,102 @@
+[
+  {
+    "id": "zh-weekday-hours",
+    "question": "平日幾點開館和閉館？",
+    "expected_source_terms": ["08:30", "21:00"],
+    "answer_keyword_groups": [["08:30", "8:30"], ["21:00", "晚上 9", "晚上9"]]
+  },
+  {
+    "id": "zh-weekend-hours",
+    "question": "星期六日都有開嗎？",
+    "expected_source_terms": ["週六", "週日不開放"],
+    "answer_keyword_groups": [["週六", "星期六"], ["17:00", "下午 5", "下午5"], ["週日", "星期日"], ["不開放", "休館"]]
+  },
+  {
+    "id": "zh-borrow-limit",
+    "question": "一個人最多能借多少本一般書？",
+    "expected_source_terms": ["10 本"],
+    "answer_keyword_groups": [["10 本", "10本"]]
+  },
+  {
+    "id": "zh-loan-period",
+    "question": "一般圖書借期是幾天？",
+    "expected_source_terms": ["21 天"],
+    "answer_keyword_groups": [["21 天", "21天"]]
+  },
+  {
+    "id": "zh-renewal",
+    "question": "沒有人預約的書可以續借幾次？",
+    "expected_source_terms": ["續借一次"],
+    "answer_keyword_groups": [["一次", "1 次", "1次"], ["沒有其他讀者預約", "沒有人預約", "無人預約"]]
+  },
+  {
+    "id": "zh-computers",
+    "question": "公共電腦在哪一層、有幾台？",
+    "expected_source_terms": ["二樓", "20 台"],
+    "answer_keyword_groups": [["二樓", "2 樓", "2樓"], ["20 台", "20台"]]
+  },
+  {
+    "id": "zh-food",
+    "question": "我能在閱覽區吃飯或喝飲料嗎？",
+    "expected_source_terms": ["一樓休息區", "不可在閱覽區用餐"],
+    "answer_keyword_groups": [["一樓休息區", "1 樓休息區", "1樓休息區"], ["有蓋飲料", "有蓋的飲料"], ["不可", "不能", "不允許"]]
+  },
+  {
+    "id": "zh-journal",
+    "question": "參考書能帶回家嗎？",
+    "expected_source_terms": ["僅限館內閱覽", "不提供外借"],
+    "answer_keyword_groups": [["館內", "圖書館內"], ["不提供外借", "不能外借", "不可外借"]]
+  },
+  {
+    "id": "en-borrow-method",
+    "question": "Where can I check out a library item?",
+    "expected_source_terms": ["self-checkout machine", "service desk"],
+    "answer_keyword_groups": [["self-checkout", "service desk"], ["campus card"]]
+  },
+  {
+    "id": "en-overdue",
+    "question": "Will I still be able to borrow when an item is overdue?",
+    "expected_source_terms": ["new borrowing is paused", "returned"],
+    "answer_keyword_groups": [["paused", "cannot borrow", "not be able to borrow"], ["returned", "return"]]
+  },
+  {
+    "id": "en-reserve",
+    "question": "How can I place a hold on a checked-out title?",
+    "expected_source_terms": ["search for the title", "reserve button"],
+    "answer_keyword_groups": [["search"], ["reserve button", "reserve"]]
+  },
+  {
+    "id": "en-lost-card",
+    "question": "Who should I tell first after losing my campus card?",
+    "expected_source_terms": ["notify the service desk", "pause borrowing"],
+    "answer_keyword_groups": [["service desk"], ["pause", "suspend"]]
+  },
+  {
+    "id": "zh-out-of-scope-tuition",
+    "question": "這學期學費是多少？",
+    "expected_source_terms": [],
+    "answer_keyword_groups": [["沒有", "未", "不包含", "不涵蓋", "無法"], ["重新", "其他", "圖書館"]],
+    "expects_fallback": true
+  },
+  {
+    "id": "zh-out-of-scope-weather",
+    "question": "明天會下雨嗎？",
+    "expected_source_terms": [],
+    "answer_keyword_groups": [["沒有", "未", "不包含", "不涵蓋", "無法"], ["重新", "其他", "圖書館"]],
+    "expects_fallback": true
+  },
+  {
+    "id": "en-out-of-scope-parking",
+    "question": "How much does campus parking cost?",
+    "expected_source_terms": [],
+    "answer_keyword_groups": [["does not", "doesn't", "not cover", "no information", "cannot"], ["rephrase", "library", "another"]],
+    "expects_fallback": true
+  },
+  {
+    "id": "en-out-of-scope-grades",
+    "question": "Where can I see my course grades?",
+    "expected_source_terms": [],
+    "answer_keyword_groups": [["does not", "doesn't", "not cover", "no information", "cannot"], ["rephrase", "library", "another"]],
+    "expects_fallback": true
+  }
+]
