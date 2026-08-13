@@ -14,7 +14,8 @@ client = TestClient(app)
 def test_response_has_request_id_and_structured_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.INFO, logger="backend.access"):
+    # Production 交由 Uvicorn logger 輸出，Render 才能從標準串流收集 JSON。
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
         response = client.get("/health")
 
     request_id = response.headers["x-request-id"]
@@ -22,7 +23,7 @@ def test_response_has_request_id_and_structured_log(
     records = [
         json.loads(record.message)
         for record in caplog.records
-        if record.name == "backend.access" and record.message.startswith("{")
+        if record.name == "uvicorn.error" and record.message.startswith("{")
     ]
     event = records[-1]
     assert event["event"] == "http_request"
