@@ -24,6 +24,13 @@ class Settings(BaseSettings):
         gt=0,
     )
 
+    # Redis 用來保存跨程序共用的限流計數；正式環境啟用限流時必須提供。
+    redis_url: str | None = None
+    rate_limit_enabled: bool = False
+    rate_limit_window_seconds: int = Field(default=60, gt=0)
+    auth_rate_limit_requests: int = Field(default=10, gt=0)
+    api_rate_limit_requests: int = Field(default=60, gt=0)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -56,3 +63,10 @@ class Settings(BaseSettings):
             raise RuntimeError("JWT_SECRET_KEY must be at least 32 bytes.")
 
         return self.jwt_secret_key
+
+    def require_redis_url(self) -> str:
+        """Return Redis URL when distributed rate limiting is enabled."""
+        if not self.redis_url:
+            raise RuntimeError("REDIS_URL is not configured.")
+
+        return self.redis_url

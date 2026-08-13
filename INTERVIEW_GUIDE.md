@@ -36,7 +36,7 @@
 | Streamlit 持久化對話歷史 | 已完成 | 登入後可建立、切換、改名、刪除及重新載入個人 RAG 對話；前端 47、後端 108 項測試 |
 | Render 後端部署 | 已完成 | Singapore Blueprint、Alembic、公開 HTTPS、health／Swagger／Auth／Conversation production smoke test |
 | Production 端到端驗收 | 已完成 | Streamlit Cloud → Render → Neon → OpenAI；重新登入還原歷史、跨帳號隔離與錯誤流程通過 |
-| Redis／observability | 規劃中 | 尚未完成，不在面試中宣稱已使用 |
+| Redis／observability | 已完成 | Render Key Value、跨 instance 固定視窗限流、429 headers、request ID、JSON access log、readiness probe |
 
 ## 4. 整體架構
 
@@ -183,7 +183,7 @@ Streamlit 每次互動會重新執行 script，因此需要 `st.session_state` �
 - 文件最多 100 chunks。
 - 每工作階段最多 10 題。
 
-這些限制用來控制記憶體、API 成本及公開展示濫用；不是正式的跨程序限流。Redis 限流仍是後續規劃。
+這些限制用來控制記憶體與 OpenAI API 成本；後端另以 Render Key Value 實作跨程序 Redis 限流，保護 Auth 與 Conversation API。
 
 ### 6.4 錯誤分類
 
@@ -625,9 +625,9 @@ main 禁止直接 push、force push 與刪除，降低未驗證變更進入穩�
 
 SQLite 提供快速隔離測試，但型別、constraint、timezone 與 SQL 行為可能和 PostgreSQL 不完全相同，因此 migration 必須在 Neon development 做 upgrade／downgrade／schema 驗證。
 
-### Session question limit，不是分散式限流
+### Session question limit 與分散式限流的分工
 
-目前限制只保護單一 Streamlit session。多 instance 或惡意重開 session 無法共享計數，所以 Redis rate limiting 留到主流程完成後加入。
+Streamlit session limit 控制單次使用者體驗與 LLM 成本；Redis rate limiting 則讓所有 Uvicorn instance 共用計數，無法藉由重開前端 session 規避。Auth 端點依來源 IP 的雜湊識別，受保護 API 優先依 Bearer token 的雜湊識別，Redis key 不保存原始 IP 或 token。
 
 ## 18. 常見面試問題與回答方向
 
@@ -665,7 +665,7 @@ Endpoint 不需要為測試寫特殊分支。FastAPI override 可以替換 datab
 
 ### Q9：如果要擴充到正式服務，下一步是什麼？
 
-Streamlit JWT、個人對話持久化與 Render backend 已完成。Streamlit Cloud 已透過 Secret `BACKEND_API_URL` 串接正式 Render HTTPS 後端；前端 HTTP client 也為 Render 免費方案冷啟動保留 75 秒逾時上限。接下來可加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
+Streamlit JWT、個人對話持久化、Render backend、Redis rate limiting 與基礎 observability 已完成。接下來可整理公開作品文件，再視需求加入 refresh token、集中式 metrics／tracing 與更完整 backup 策略。
 
 ### Q10：你如何證明不是只把套件拼在一起？
 
@@ -816,7 +816,33 @@ login 只證明帳密驗證成功並取得 token；`/auth/me` 會用相同 Beare
 
 > Render 持有 Neon URL 與 JWT secret；Streamlit Cloud 持有 OpenAI key 與公開 backend base URL。程式只讀環境變數，Git 只放欄位範例；提交前掃描 staged diff，若 token 曾曝光則直接輪替而不是只刪畫面。
 
-## 24. 每階段更新模板
+## 24. Redis 限流與基礎可觀測性
+
+- 階段名稱：Redis rate limiting 與 basic observability。
+- 完成日期：2026-08-13。
+- 功能與使用者價值：登入、註冊與對話 API 在所有後端 instance 間共用限流計數；每個 response 都有 request ID，部署日誌可依 JSON 欄位追查延遲與錯誤。
+- 新增技術：Render Key Value、redis-py asyncio、Redis Lua atomic script、fixed-window rate limit、ASGI middleware、structured JSON logging、liveness／readiness probes。
+- 資料流：HTTP request → request ID → Redis atomic `INCR + EXPIRE` → 允許或 429 → FastAPI route → response headers → JSON access log。
+- 安全設計：Redis key 只保存 SHA-256 截斷識別值，不保存原始 IP／JWT；日誌不含 query、body、Authorization 或連線字串；Key Value 禁止外部網路，只用 Render Singapore private network。
+- 測試與驗證數字：後端 115 passed；另以 production smoke test 驗證 health、ready、request ID、rate-limit headers 與超限 429。
+- 遇到的問題與解法：本機 shell 一度使用系統 Python 而缺少 backend dependencies；改以 `.venv-backend` 的明確直譯器執行，避免「終端提示已啟用」與實際 subprocess 環境不一致。
+- 設計取捨：固定視窗簡單、低成本且 Lua 操作原子化，但視窗邊界可能允許短暫 burst；更嚴格需求可改 sliding window 或 token bucket。Redis 暫時失效採 fail-open 維持 API 可用性，同時寫 error log 且 `/ready` 回報失敗。
+- 面試可說重點：distributed state、atomicity、429 semantics、privacy-preserving identifiers、liveness vs readiness、fail-open vs fail-closed、structured logging 與 correlation ID。
+- 仍未完成：公開 README／架構圖／Demo 素材整理、refresh token、metrics／distributed tracing 與備份演練。
+
+### 為什麼用 Lua，而不是分開呼叫 `INCR` 與 `EXPIRE`？
+
+兩次網路呼叫之間若程序中斷，key 可能沒有 TTL，形成永久計數。Lua script 在 Redis 內以單一原子操作執行，並在第一次計數時設定 expiration，讓多 worker 併發時仍維持一致。
+
+### 為什麼 `/health` 與 `/ready` 分開？
+
+`/health` 是 liveness，只回答程序是否能處理 HTTP，Render 可用它避免依賴短暫抖動造成重啟循環；`/ready` 驗證 PostgreSQL 與 Redis，適合部署驗收與告警。依賴失效時程序仍活著，但不代表完整服務已準備好。
+
+### 429 response 要帶哪些資訊？
+
+API 回 `429 Too Many Requests`、不暴露內部 key 的固定錯誤訊息、`Retry-After`，並提供 `X-RateLimit-Limit` 與 `X-RateLimit-Remaining`。客戶端因此知道何時安全重試，監控也能辨識容量限制而不是誤判成 5xx。
+
+## 25. 每階段更新模板
 
 階段完成後，在本文件更新：
 
