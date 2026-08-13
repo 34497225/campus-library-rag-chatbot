@@ -1,5 +1,7 @@
 # Campus Library RAG Chatbot｜校園圖書館智能客服
 
+[![Production Monitor](https://github.com/34497225/campus-library-rag-chatbot/actions/workflows/production-monitor.yml/badge.svg)](https://github.com/34497225/campus-library-rag-chatbot/actions/workflows/production-monitor.yml)
+
 一套可公開展示的雙語文件型 RAG 智能客服。前端使用 Streamlit，支援 PDF／CSV 與範例 FAQ；後端使用 FastAPI、PostgreSQL、JWT 與 Redis，提供身分驗證、個人對話持久化、擁有者資料隔離、分散式限流及基本可觀測性。
 
 > 範例 FAQ 是虛構展示資料，不代表任何學校或圖書館的正式規定。請勿上傳機密或個人敏感文件。
@@ -12,6 +14,7 @@
 - API 操作說明：[docs/API.md](docs/API.md)
 - 五分鐘 Demo 腳本：[docs/DEMO.md](docs/DEMO.md)
 - Metrics 與告警操作：[docs/OPERATIONS.md](docs/OPERATIONS.md)
+- 外部 production dashboard：[GitHub Actions Production Monitor](https://github.com/34497225/campus-library-rag-chatbot/actions/workflows/production-monitor.yml)
 - 資料庫復原演練與 runbook：[docs/RECOVERY.md](docs/RECOVERY.md)
 - 面試知識整理：[INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md)
 
@@ -27,7 +30,7 @@ Render Free instance 閒置後會休眠，第一次請求可能需要等待約 5
 - Owner-scoped repository 查詢，阻止跨帳號讀取或修改資料
 - Neon PostgreSQL、SQLAlchemy ORM 與 Alembic migration
 - Redis 原子固定視窗限流、429／`Retry-After` 與 rate-limit headers
-- `/health`、`/ready`、`X-Request-ID` 與 JSON request logs
+- `/health`、`/ready`、`X-Request-ID`、JSON logs 與每 15 分鐘外部 probe／Issue alert
 - Prometheus request counter、latency histogram 與 in-flight gauge
 - GitHub Actions required checks、Render Blueprint 與自動部署
 

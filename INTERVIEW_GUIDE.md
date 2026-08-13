@@ -28,6 +28,7 @@
 | --- | --- | --- |
 | Streamlit RAG 展示版 | 已完成 | PDF／CSV、FAISS、OpenAI、雙語介面、來源與 Markdown 匯出 |
 | RAG 品質評估 | 已完成 | 16 個雙語／fallback 案例；Top-3 retrieval 100%、grounded answer 94% |
+| 外部 production monitor | 已完成 | GitHub 每 15 分鐘探測 health／ready／metrics；Summary dashboard 與 Issue alert |
 | GitHub CI 與 main 保護 | 已完成 | 前後端 jobs、PR required checks |
 | FastAPI／Neon／Alembic 基礎 | 已完成 | `/health`、Users migration、development branch 驗證 |
 | Auth foundation | 已完成 | register、login、me、Argon2id、JWT、55 項後端測試時完成 |
@@ -923,7 +924,21 @@ Prometheus 每組 label 值都建立獨立 time series。UUID、Email 與任意 
 - 面試可說重點：先量測再改善；把 retrieval failure 與 generation failure 分開；out-of-scope 不計入 retrieval denominator；latency 是單次觀察而非 SLA。
 - 仍未完成：擴大真實匿名 query set、重複多輪統計信賴區間、人工 rubric 或獨立 semantic judge。
 
-## 28. 每階段更新模板
+## 28. 免費外部 Production Monitor 階段紀錄
+
+- 階段名稱：Scheduled external production monitoring。
+- 完成日期：2026-08-13。
+- 功能與使用者價值：即使沒有人打開作品，也由外部 GitHub runner 定期確認 Render API、PostgreSQL／Redis readiness 與 Prometheus metrics。
+- 新增技術：scheduled GitHub Actions、stdlib HTTP probe、Prometheus text parser、workflow job summary dashboard、GitHub Issue alert／recovery automation。
+- 資料流：GitHub-hosted runner → Render `/health`、`/ready`、`/metrics` → Markdown run summary；probe failure → `production-alert` Issue；recovery → comment and close。
+- 安全設計：只讀公開低基數 metrics；不需要第三方帳號、OAuth Email 分享、API key 或 monitor secret；Issue 不包含 response body、JWT 或 connection URL。
+- 測試與驗證數字：parser／aggregation 4 tests；本機真實 probe 驗證 health=ok、ready=ready、metrics counters 與 p95 bucket。
+- 遇到的問題與解法：Grafana Cloud OAuth 需要把 GitHub Email 提供給第三方；改採現有 GitHub 免費能力，避免未經明確授權分享個資或啟用付費服務。
+- 設計取捨：Actions Summary 是最小 dashboard，不提供長期 time-series 圖或正式 paging；15 分鐘 schedule 是 best-effort，適合作品展示而非 SLA。
+- 面試可說重點：self-check 與 external probe 的差別、alert deduplication、recovery auto-close、Render cold start retry、為何不把敏感資料寫進 alert。
+- 仍未完成：專用 time-series backend、長期 retention、PagerDuty／SMS、SLO burn-rate alert 與 distributed tracing。
+
+## 29. 每階段更新模板
 
 階段完成後，在本文件更新：
 
