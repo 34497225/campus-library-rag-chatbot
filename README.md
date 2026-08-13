@@ -12,6 +12,7 @@
 - API 操作說明：[docs/API.md](docs/API.md)
 - 五分鐘 Demo 腳本：[docs/DEMO.md](docs/DEMO.md)
 - Metrics 與告警操作：[docs/OPERATIONS.md](docs/OPERATIONS.md)
+- 資料庫復原演練與 runbook：[docs/RECOVERY.md](docs/RECOVERY.md)
 - 面試知識整理：[INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md)
 
 Render Free instance 閒置後會休眠，第一次請求可能需要等待約 50 秒或更久。

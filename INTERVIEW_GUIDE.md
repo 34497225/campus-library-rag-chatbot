@@ -665,7 +665,21 @@ Endpoint 不需要為測試寫特殊分支。FastAPI override 可以替換 datab
 
 ### Q9：如果要擴充到正式服務，下一步是什麼？
 
-Streamlit JWT、個人對話持久化、Render backend、Redis rate limiting 與基礎 observability 已完成。接下來可整理公開作品文件，再視需求加入 refresh token、集中式 metrics／tracing 與更完整 backup 策略。
+Streamlit JWT、個人對話持久化、Render backend、Redis rate limiting、基礎 observability 與隔離資料庫復原演練已完成。接下來可視需求加入 refresh token、集中式 metrics／tracing，以及經核准的 production point-in-time restore 演練。
+
+### Neon recovery drill：面試可以怎麼說
+
+這個專案沒有把「有雲端資料庫」直接等同於「已具備災難復原」。我先定義 RPO 與 RTO，再以 production 為唯讀父分支建立隔離的 Neon child branch，在 child 上加入事故 marker，使用保留事故狀態的 branch reset 回復父分支，最後核對 Alembic revision、核心資料筆數與事故 table 已消失。reset API 回應約 1.45 秒，整體驗證在 10 秒內完成，但我會明確說這只是小型閒置環境的一次量測，不是 production SLA。
+
+安全上的重點是所有寫入都顯式指定 temporary branch ID，不對 production 執行破壞測試；演練後也刪除 drill 與 preserved-incident branches。真正 production logical corruption 會先用 Time Travel Assist 找出正確時間、restore 到 preview branch 驗證，再經核准 finalize，而不是直接覆蓋 production。
+
+常見追問：branch reset 和 PITR 有什麼不同？
+
+- branch reset：讓 child 回到 parent 的目前狀態，適合丟棄 development／test 的實驗變更。
+- point-in-time restore：回到 retention window 內的歷史時間，適合 production 誤刪或邏輯損壞。
+- branch 是隔離工作副本，不應被描述成獨立、永久、異地備份；可復原範圍仍受 history retention 與方案限制。
+
+STAR 說法：我把備份能力轉成可驗證的 recovery exercise；在不寫 production 的限制下製造 branch divergence，量測 reset、驗證 schema 與 referential integrity、保留事故狀態供檢查，最後清除資源並把 production PITR 的審批與 smoke test 寫入 runbook。這讓團隊能說清楚「測過什麼、沒測過什麼」，避免把單次演練誤當 SLA。
 
 ### Q10：你如何證明不是只把套件拼在一起？
 
