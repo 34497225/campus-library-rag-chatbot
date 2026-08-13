@@ -69,7 +69,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 TEXT = {
     "zh": {
-        "title": "校園圖書館智能客服",
+        "title": "圖書館智能客服",
         "subtitle": "以 RAG 技術根據文件內容提供問答；範例資料為虛構示範，非真實校規。",
         "about": "系統說明",
         "about_body": "使用 Streamlit、LangChain、FAISS 與 OpenAI 建立的文件問答系統。",
