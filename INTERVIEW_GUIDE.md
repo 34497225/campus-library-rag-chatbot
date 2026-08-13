@@ -842,7 +842,35 @@ login 只證明帳密驗證成功並取得 token；`/auth/me` 會用相同 Beare
 
 API 回 `429 Too Many Requests`、不暴露內部 key 的固定錯誤訊息、`Retry-After`，並提供 `X-RateLimit-Limit` 與 `X-RateLimit-Remaining`。客戶端因此知道何時安全重試，監控也能辨識容量限制而不是誤判成 5xx。
 
-## 25. 每階段更新模板
+## 25. 作品集文件、架構圖與履歷素材
+
+- 階段名稱：Project showcase documentation。
+- 完成日期：2026-08-13。
+- 功能與使用者價值：README 現在能讓第一次看到 repository 的人，在幾分鐘內理解問題、架構、線上 API、啟動方式、測試與限制；另提供可照著操作的 API 文件及五分鐘 Demo 腳本。
+- 新增技術：Mermaid architecture-as-documentation、API usage guide、production demo runbook、portfolio／resume positioning。
+- 資料流：README 架構圖同時呈現 Streamlit RAG 路徑、FastAPI persistence 路徑、Redis observability 路徑與 GitHub Actions → Render delivery 路徑。
+- 安全設計：公開文件只提供 secret 欄位名稱與 placeholder，不包含 token、密碼或 database／Redis connection URL；Demo 明確要求使用一次性測試帳號與非敏感文件。
+- 測試與驗證數字：文件記錄前端 48 tests、後端 116 tests，並提供 production `/health`、`/ready` 與 Swagger 入口。
+- 遇到的問題與解法：舊 README 仍只描述早期 RAG prototype，無法反映後續 authentication、persistence、deployment 與 observability；改以一條完整使用者旅程統整，而非堆疊套件名稱。
+- 設計取捨：使用 Mermaid 保持架構圖與 Git diff 可審查、可維護；不宣稱尚未建立的公開 Streamlit URL、SLA、refresh token、tracing 或自動備份。
+- 面試可說重點：從產品問題切入，再說明 RAG 與 transaction API 是兩條不同資料流；以 owner isolation、atomic rate limiting、required CI 和 production smoke tests 證明工程品質。
+- 仍未完成：refresh token、metrics／distributed tracing、常駐 Render instance、獨立 migration job 與備份還原演練。
+
+### 30 秒自我介紹版本
+
+> 我做了一套雙語校園圖書館 RAG 客服。Streamlit 負責文件上傳、語意檢索與回答，FastAPI 負責 JWT 身分驗證及個人對話持久化；資料放在 Neon PostgreSQL，Redis 提供跨 instance 原子限流。專案有 owner-scoped authorization、Alembic migration、前後端共 164 項測試、GitHub required CI，並透過 Render Blueprint 自動部署。
+
+### 履歷 bullet
+
+> 開發並部署雙語 RAG 文件客服，使用 Streamlit、LangChain、FAISS 與 OpenAI 完成 PDF／CSV 語意檢索；以 FastAPI、SQLAlchemy、Alembic、Neon PostgreSQL 實作 Argon2id／JWT 身分驗證及 owner-scoped 個人對話持久化，並加入 Redis Lua 分散式限流、readiness、Request ID、JSON logs、116 項後端與 48 項前端測試，以及 GitHub Actions required CI／Render 自動部署流程。
+
+### 可以量化與不能過度宣稱的內容
+
+可以說：164 項自動測試、production smoke test、兩帳號 owner isolation 驗收、Redis 原子限流、Singapore region、CI 通過後部署。
+
+不要說：具有正式 SLA、零停機 migration、全球高可用、完整 distributed tracing、自動備份還原或 refresh-token rotation。這些目前是下一階段改善方向，不是已完成能力。
+
+## 26. 每階段更新模板
 
 階段完成後，在本文件更新：
 
