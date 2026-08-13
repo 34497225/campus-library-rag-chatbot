@@ -12,7 +12,9 @@ from backend.config import Settings
 from backend.rate_limit import check_rate_limit
 
 
-access_logger = logging.getLogger("backend.access")
+# 使用 Uvicorn 已配置輸出至標準錯誤的 logger，確保 Render 能收集 JSON。
+# 只傳入 JSON 字串，不沿用 Uvicorn access logger 的格式化參數。
+access_logger = logging.getLogger("uvicorn.error")
 access_logger.setLevel(logging.INFO)
 
 
