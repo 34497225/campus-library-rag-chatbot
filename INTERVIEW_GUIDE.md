@@ -27,6 +27,7 @@
 | 階段 | 狀態 | 可驗證成果 |
 | --- | --- | --- |
 | Streamlit RAG 展示版 | 已完成 | PDF／CSV、FAISS、OpenAI、雙語介面、來源與 Markdown 匯出 |
+| RAG 品質評估 | 已完成 | 16 個雙語／fallback 案例；Top-3 retrieval 100%、grounded answer 94% |
 | GitHub CI 與 main 保護 | 已完成 | 前後端 jobs、PR required checks |
 | FastAPI／Neon／Alembic 基礎 | 已完成 | `/health`、Users migration、development branch 驗證 |
 | Auth foundation | 已完成 | register、login、me、Argon2id、JWT、55 項後端測試時完成 |
@@ -908,7 +909,21 @@ Prometheus 每組 label 值都建立獨立 time series。UUID、Email 與任意 
 - Histogram 將 latency 放入可累計 bucket，可跨 instance 聚合後用 `histogram_quantile()` 算 p95。
 - Gauge 可上下變動，適合表示某一時刻的 in-flight requests；但多 process 時要特別設計聚合方式。
 
-## 27. 每階段更新模板
+## 27. RAG 品質評估階段紀錄
+
+- 階段名稱：Reproducible RAG evaluation。
+- 完成日期：2026-08-13。
+- 功能與使用者價值：用版本控制的中英文案例驗證檢索、回答與資料不足 fallback，避免只靠人工挑選成功畫面。
+- 新增技術：evaluation dataset、Top-3 evidence scoring、keyword-group grounded scoring、nearest-rank p95、真實 OpenAI evaluation run。
+- 資料流：虛構 FAQ → 與 production 相同的 splitter／embedding／FAISS → Top-3 context → chat model → retrieval 與 answer 分開計分。
+- 安全設計：只提交逐案 pass/fail、latency 與 token 數，不提交模型原始回答或使用者文件；評估只使用虛構資料。
+- 測試與驗證數字：12 個可回答案例 retrieval 100%；16 個案例 grounded/fallback answer 94%；前端與 evaluation helper 54 tests、後端 119 tests。
+- 遇到的問題與解法：初次評估只有 75%，揭露英文問題被回成中文及一般問題被誤當問候；改以程式顯式判定回覆語言、精確比對 greeting，並把 factual temperature 設為 0，最終超過 90% 門檻。
+- 設計取捨：透明 keyword groups 容易審查且不需要另一個 judge model，但無法衡量所有同義表達；保留 1 個未通過案例，不宣稱 100% answer quality。
+- 面試可說重點：先量測再改善；把 retrieval failure 與 generation failure 分開；out-of-scope 不計入 retrieval denominator；latency 是單次觀察而非 SLA。
+- 仍未完成：擴大真實匿名 query set、重複多輪統計信賴區間、人工 rubric 或獨立 semantic judge。
+
+## 28. 每階段更新模板
 
 階段完成後，在本文件更新：
 
