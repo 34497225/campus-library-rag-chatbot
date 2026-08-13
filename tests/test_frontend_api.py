@@ -64,6 +64,14 @@ def test_normalize_base_url_rejects_empty_value() -> None:
         normalize_base_url("   ")
 
 
+def test_request_timeout_allows_render_free_tier_cold_start() -> None:
+    """The frontend should wait long enough for a sleeping Render service."""
+
+    # Render 免費服務冷啟動可能超過 50 秒；75 秒仍有明確上限，
+    # 兼顧正式環境可用性與避免請求永久卡住。
+    assert REQUEST_TIMEOUT_SECONDS == 75
+
+
 def test_register_user_sends_expected_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -664,7 +664,7 @@ Endpoint 不需要為測試寫特殊分支。FastAPI override 可以替換 datab
 
 ### Q9：如果要擴充到正式服務，下一步是什麼？
 
-Streamlit JWT、個人對話持久化與 Render backend 已完成；接下來是 Streamlit Cloud 串接正式後端的 E2E 驗收，再加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
+Streamlit JWT、個人對話持久化與 Render backend 已完成。Streamlit Cloud 已透過 Secret `BACKEND_API_URL` 串接正式 Render HTTPS 後端；前端 HTTP client 也為 Render 免費方案冷啟動保留 75 秒逾時上限。接下來可加入 Redis rate limiting、observability、refresh token 與更完整 deployment／backup 策略。
 
 ### Q10：你如何證明不是只把套件拼在一起？
 
