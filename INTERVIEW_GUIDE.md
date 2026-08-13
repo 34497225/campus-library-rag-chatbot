@@ -1,6 +1,6 @@
 # 校園圖書館 RAG 智能客服：面試知識與回答指南
 
-最後更新：2026-08-12
+最後更新：2026-08-13
 
 ## 1. 文件用途
 
@@ -35,6 +35,7 @@
 | Streamlit 身分驗證 UI | 已完成 | register、login、logout、Bearer `/auth/me`、安全錯誤呈現、31 項前端測試與瀏覽器 E2E |
 | Streamlit 持久化對話歷史 | 已完成 | 登入後可建立、切換、改名、刪除及重新載入個人 RAG 對話；前端 47、後端 108 項測試 |
 | Render 後端部署 | 已完成 | Singapore Blueprint、Alembic、公開 HTTPS、health／Swagger／Auth／Conversation production smoke test |
+| Production 端到端驗收 | 已完成 | Streamlit Cloud → Render → Neon → OpenAI；重新登入還原歷史、跨帳號隔離與錯誤流程通過 |
 | Redis／observability | 規劃中 | 尚未完成，不在面試中宣稱已使用 |
 
 ## 4. 整體架構
@@ -779,7 +780,43 @@ login 只證明帳密驗證成功並取得 token；`/auth/me` 會用相同 Beare
 
 不只刪除畫面或測試資料，而是把憑證視為已失陷：輪替 JWT secret、觸發重新部署使舊 token 失效、刪除臨時帳號／對話，最後重新驗證 health 與拒絕登入。
 
-## 23. 每階段更新模板
+## 23. Production 端到端驗收與冷啟動處理
+
+- 階段名稱：Streamlit Cloud production E2E。
+- 完成日期：2026-08-13。
+- 功能與使用者價值：公開 Streamlit 可註冊、登入、完成 RAG 問答，登出再登入後仍能還原個人歷史。
+- 新增技術：production E2E、Render cold-start handling、跨帳號 isolation smoke test、部署 secrets 分層。
+- 資料流：Streamlit Cloud → Render HTTPS API → JWT／owner authorization → Neon PostgreSQL → OpenAI → Conversation／Message persistence。
+- 安全設計：兩個臨時帳號驗證 owner isolation；錯誤登入回 401；Render 保存 database／JWT secrets，Streamlit Cloud 保存 backend URL／OpenAI secret，Git 不保存值。
+- 測試與驗證數字：前端 48 passed、後端 108 passed；正式站通過 register、login、`/auth/me`、RAG、重新登入還原、跨帳號空清單與 invalid-login 401。
+- 遇到的問題與解法：Render Free 閒置會休眠，第一次 request 可能超過原本 10 秒；將 backend timeout 調整為 75 秒並補 timeout tests，仍避免無限等待。
+- 設計取捨：75 秒適合免費展示環境；有 SLA 的正式系統應改用常駐 instance、監控 latency 並為 migration 使用獨立 release job。
+- 面試可說重點：health check 不等於 E2E、冷啟動與商業邏輯錯誤的分層診斷、BOLA／IDOR 隔離驗收、production test data cleanup。
+- 仍未完成：Redis rate limiting、observability、refresh token 與備份演練。
+
+### Production E2E 驗收範圍
+
+```text
+公開 Streamlit
+  → 註冊／登入／Bearer JWT
+  → 建立 Conversation
+  → 保存 user message
+  → 文件檢索與 LLM 回答
+  → 保存 assistant message
+  → 登出／重新登入並還原歷史
+```
+
+`/health` 只證明程序能接受 request，不能證明 migration、JWT、資料庫、owner-scoped CRUD、OpenAI 與持久化都正確，因此部署完成必須再走完整流程。跨帳號測試建立 A、B 兩個臨時帳號；A 建立 conversation 後，B 的 list 必須仍為空，用來捕捉 BOLA／IDOR 類授權錯誤。
+
+面試追問：為什麼不把 timeout 設成無限？
+
+> 有限 timeout 是故障邊界；無限等待會讓 Streamlit request 和使用者介面永久卡住。75 秒涵蓋 Render Free 的冷啟動，但真的 production 會用常駐 instance 與 latency monitoring 解決根因。
+
+面試追問：如何管理跨平台 secrets？
+
+> Render 持有 Neon URL 與 JWT secret；Streamlit Cloud 持有 OpenAI key 與公開 backend base URL。程式只讀環境變數，Git 只放欄位範例；提交前掃描 staged diff，若 token 曾曝光則直接輪替而不是只刪畫面。
+
+## 24. 每階段更新模板
 
 階段完成後，在本文件更新：
 
