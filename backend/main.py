@@ -1,4 +1,6 @@
 from fastapi import FastAPI, HTTPException, status
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -9,6 +11,7 @@ from backend.auth import router as auth_router
 from backend.conversations import router as conversations_router
 from backend.config import Settings
 from backend.database import get_engine
+from backend.metrics import metrics_registry
 from backend.observability import ObservabilityMiddleware
 from backend.rate_limit import get_redis_client
 
@@ -50,3 +53,12 @@ async def readiness_check() -> dict[str, str]:
         ) from None
 
     return {"status": "ready"}
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics() -> Response:
+    """Expose low-cardinality process metrics for a Prometheus scraper."""
+    return Response(
+        content=generate_latest(metrics_registry),
+        media_type=CONTENT_TYPE_LATEST,
+    )

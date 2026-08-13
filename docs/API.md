@@ -20,6 +20,7 @@ Production base URL：`https://campus-library-chatbot-api.onrender.com`
 | --- | --- | --- | --- | --- |
 | GET | `/health` | 否 | 200 | Liveness；只代表 HTTP process 可回應 |
 | GET | `/ready` | 否 | 200 | Readiness；確認 PostgreSQL 與 Redis 可用 |
+| GET | `/metrics` | 否 | 200 | Prometheus text format；不列入 Swagger |
 | GET | `/docs` | 否 | 200 | Swagger UI |
 
 `/ready` 依賴異常時回：

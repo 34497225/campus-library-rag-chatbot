@@ -870,7 +870,31 @@ API 回 `429 Too Many Requests`、不暴露內部 key 的固定錯誤訊息、`R
 
 不要說：具有正式 SLA、零停機 migration、全球高可用、完整 distributed tracing、自動備份還原或 refresh-token rotation。這些目前是下一階段改善方向，不是已完成能力。
 
-## 26. 每階段更新模板
+## 26. Prometheus Metrics 與告警基礎
+
+- 階段名稱：Production metrics and alerting foundation。
+- 完成日期：2026-08-13。
+- 功能與使用者價值：`/metrics` 讓監控系統能計算流量、5xx／429 比率、p95 latency 與目前 in-flight requests，不必只靠人工閱讀 log。
+- 新增技術：Prometheus Python client、Counter、Histogram、Gauge、PromQL、route-template cardinality control、incident runbook。
+- 資料流：HTTP middleware → 計時與狀態分類 → project-specific registry → `/metrics` → 未來的 Prometheus／Grafana scraper。
+- 安全設計：labels 只有固定 method、FastAPI route template、status；未知 path 統一為 `unmatched`，不保存 UUID、Email、JWT、query、body 或 connection URL。
+- 測試與驗證數字：新增 metrics format、route template privacy 與 OpenAPI exclusion tests；完整測試數字以本階段完成紀錄為準。
+- 遇到的問題與解法：直接使用 concrete path 會讓每個 Conversation UUID 都成為新 time series；改在 `call_next` 後讀取 FastAPI matched route template。
+- 設計取捨：使用 process-local registry 適合目前單一 Uvicorn process；未來改成多 worker 時要採 Prometheus multiprocess mode。公開 `/metrics` 方便外部 scraper，但只輸出低敏感度聚合資料。
+- 面試可說重點：logs 回答單一事件發生什麼，metrics 回答系統整體是否異常；Histogram bucket 可在 Prometheus server 端聚合計算 p95，Summary 則不適合跨 instance 合併 quantile。
+- 仍未完成：真正外部 scraper／dashboard／alert receiver、distributed tracing、備份還原演練與獨立 migration job。
+
+### 為什麼不能把 `user_id` 或完整 path 放進 label？
+
+Prometheus 每組 label 值都建立獨立 time series。UUID、Email 與任意 URL 不只可能洩漏資料，也會造成 cardinality 無限成長、增加記憶體與查詢成本。應使用 `/conversations/{conversation_id}` 這類有限 route template。
+
+### Counter、Histogram、Gauge 分別解決什麼？
+
+- Counter 只增加，搭配 `rate()` 計算 request rate、5xx 或 429 比率。
+- Histogram 將 latency 放入可累計 bucket，可跨 instance 聚合後用 `histogram_quantile()` 算 p95。
+- Gauge 可上下變動，適合表示某一時刻的 in-flight requests；但多 process 時要特別設計聚合方式。
+
+## 27. 每階段更新模板
 
 階段完成後，在本文件更新：
 

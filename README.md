@@ -11,6 +11,7 @@
 - Readiness：<https://campus-library-chatbot-api.onrender.com/ready>
 - API 操作說明：[docs/API.md](docs/API.md)
 - 五分鐘 Demo 腳本：[docs/DEMO.md](docs/DEMO.md)
+- Metrics 與告警操作：[docs/OPERATIONS.md](docs/OPERATIONS.md)
 - 面試知識整理：[INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md)
 
 Render Free instance 閒置後會休眠，第一次請求可能需要等待約 50 秒或更久。
@@ -26,6 +27,7 @@ Render Free instance 閒置後會休眠，第一次請求可能需要等待約 5
 - Neon PostgreSQL、SQLAlchemy ORM 與 Alembic migration
 - Redis 原子固定視窗限流、429／`Retry-After` 與 rate-limit headers
 - `/health`、`/ready`、`X-Request-ID` 與 JSON request logs
+- Prometheus request counter、latency histogram 與 in-flight gauge
 - GitHub Actions required checks、Render Blueprint 與自動部署
 
 ## 系統架構
