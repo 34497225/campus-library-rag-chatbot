@@ -36,3 +36,30 @@ services:
 
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "60"
+
+      # 使用同一 Blueprint、同一區域的 Render Key Value 私有連線。
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: campus-library-chatbot-rate-limit
+          property: connectionString
+
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+
+      - key: RATE_LIMIT_WINDOW_SECONDS
+        value: "60"
+
+      - key: AUTH_RATE_LIMIT_REQUESTS
+        value: "10"
+
+      - key: API_RATE_LIMIT_REQUESTS
+        value: "60"
+
+  # 限流計數只需要短期 TTL，不需要磁碟持久化；免費方案已足夠展示。
+  - type: keyvalue
+    name: campus-library-chatbot-rate-limit
+    plan: free
+    region: singapore
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru

@@ -102,6 +102,32 @@ def test_settings_read_jwt_configuration(
     assert settings.access_token_expire_minutes == 45
 
 
+def test_settings_require_redis_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    settings = Settings(_env_file=None)
+
+    with pytest.raises(RuntimeError, match="REDIS_URL is not configured"):
+        settings.require_redis_url()
+
+
+def test_settings_read_rate_limit_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REDIS_URL", "redis://example.invalid:6379/0")
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMIT_WINDOW_SECONDS", "30")
+    monkeypatch.setenv("AUTH_RATE_LIMIT_REQUESTS", "4")
+    monkeypatch.setenv("API_RATE_LIMIT_REQUESTS", "20")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.require_redis_url() == "redis://example.invalid:6379/0"
+    assert settings.rate_limit_enabled is True
+    assert settings.rate_limit_window_seconds == 30
+    assert settings.auth_rate_limit_requests == 4
+    assert settings.api_rate_limit_requests == 20
+
+
 @pytest.mark.parametrize(
     "invalid_minutes",
     [0, -1],
