@@ -6,9 +6,9 @@ from typing import Any
 import requests
 
 
-# 每一個後端請求最多等待 10 秒。
-# 設定 timeout 可以避免後端離線時，Streamlit 畫面永久卡住。
-REQUEST_TIMEOUT_SECONDS = 10
+# Render 免費服務閒置後可能需要約 50 秒冷啟動，因此保留 75 秒等待空間。
+# 同時仍設定上限，避免後端真的離線時，Streamlit 畫面永久卡住。
+REQUEST_TIMEOUT_SECONDS = 75
 
 
 class BackendAPIError(Exception):
