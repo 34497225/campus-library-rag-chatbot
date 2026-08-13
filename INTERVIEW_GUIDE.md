@@ -874,7 +874,7 @@ API 回 `429 Too Many Requests`、不暴露內部 key 的固定錯誤訊息、`R
 
 ### 30 秒自我介紹版本
 
-> 我做了一套雙語校園圖書館 RAG 客服。Streamlit 負責文件上傳、語意檢索與回答，FastAPI 負責 JWT 身分驗證及個人對話持久化；資料放在 Neon PostgreSQL，Redis 提供跨 instance 原子限流。專案有 owner-scoped authorization、Alembic migration、前後端共 164 項測試、GitHub required CI，並透過 Render Blueprint 自動部署。
+> 我做了一套雙語校園圖書館 RAG 客服。Streamlit 負責文件上傳、語意檢索與回答，FastAPI 負責 JWT 身分驗證及個人對話持久化；資料放在 Neon PostgreSQL，Redis 提供跨 instance 原子限流。專案有 owner-scoped authorization、Alembic migration、前後端共 177 項測試、GitHub required CI、外部 production monitor，並透過 Render Blueprint 自動部署。
 
 ### 履歷 bullet
 
@@ -882,7 +882,7 @@ API 回 `429 Too Many Requests`、不暴露內部 key 的固定錯誤訊息、`R
 
 ### 可以量化與不能過度宣稱的內容
 
-可以說：164 項自動測試、production smoke test、兩帳號 owner isolation 驗收、Redis 原子限流、Singapore region、CI 通過後部署。
+可以說：177 項自動測試、production E2E、兩帳號 owner isolation 驗收、Redis 原子限流、Singapore region、CI 通過後部署，以及每 15 分鐘的外部 monitor／Issue alert。
 
 不要說：具有正式 SLA、零停機 migration、全球高可用、完整 distributed tracing、自動備份還原或 refresh-token rotation。這些目前是下一階段改善方向，不是已完成能力。
 
@@ -938,7 +938,21 @@ Prometheus 每組 label 值都建立獨立 time series。UUID、Email 與任意 
 - 面試可說重點：self-check 與 external probe 的差別、alert deduplication、recovery auto-close、Render cold start retry、為何不把敏感資料寫進 alert。
 - 仍未完成：專用 time-series backend、長期 retention、PagerDuty／SMS、SLO burn-rate alert 與 distributed tracing。
 
-## 29. 每階段更新模板
+## 29. v1.0 Production E2E 與履歷版收尾
+
+- 階段名稱：Portfolio v1.0 release readiness。
+- 完成日期：2026-08-13。
+- 功能與使用者價值：公開 Streamlit 前端可完成註冊、登入、RAG 問答、登出再登入還原個人對話；作品網址可直接放入履歷。
+- 新增技術：正式環境 browser E2E、跨服務驗收、測試資料精準清理、release checklist 與 semantic version tag。
+- 資料流：Chrome → Streamlit Cloud → Render FastAPI → Neon PostgreSQL／Redis → OpenAI → Streamlit 回答與持久化歷史。
+- 安全設計：只建立一次性 `example.com` 帳號；驗收後先經 UI 刪除對話，再依精確 Email 刪除 production 使用者並確認 0 orphan rows；不在文件保存密碼、JWT 或 connection URL。
+- 測試與驗證數字：前端／evaluation／monitor 58 tests、後端 119 tests，共 177 tests；production 完成 health、ready、註冊、登入、RAG、跨登入持久化及 cleanup。
+- 遇到的問題與解法：送出回答後為避免捲動跳動，UI 不立即 rerun sidebar；因此以登出再登入驗證資料確實已由 API 保存，而不是只存在 session state。
+- 設計取捨：v1.0 以「可公開展示、可重現、可解釋」為完成標準；不為履歷版硬加 refresh token、distributed tracing 或持久化 vector DB，避免擴大範圍與延後交付。
+- 面試可說重點：health check 只證明 process 活著；真正 E2E 必須穿過 UI、API、資料庫與模型，並且要包含重登入驗證與測試資料回收。
+- 仍未完成：屬於未來產品化方向的 Email 驗證／密碼重設、refresh rotation、持久化 vector DB、OpenTelemetry 與付費常駐服務；不阻擋履歷作品 v1.0。
+
+## 30. 每階段更新模板
 
 階段完成後，在本文件更新：
 

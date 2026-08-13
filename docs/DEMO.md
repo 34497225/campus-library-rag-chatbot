@@ -1,5 +1,9 @@
 # 五分鐘作品 Demo 腳本
 
+正式前端：<https://campus-library-rag-chatbot.streamlit.app/>
+
+正式 API：<https://campus-library-chatbot-api.onrender.com>
+
 目標：用一條完整使用者旅程展示 RAG、後端、安全、資料持久化與工程品質，而不是逐頁朗讀功能清單。
 
 ## Demo 前準備
