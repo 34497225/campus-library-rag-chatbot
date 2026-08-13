@@ -57,6 +57,31 @@ clamp_min(sum(rate(campus_library_http_requests_total[5m])), 0.001)
 - Rate limit：429 比率連續 10 分鐘高於 20%，確認是否遭濫用或限制過嚴。
 - No traffic：預期展示時段完全沒有 scrape 或 request，檢查 Render 是否休眠或 scraper 是否失效。
 
+## 已啟用的免費外部監控
+
+`.github/workflows/production-monitor.yml` 每 15 分鐘從 GitHub-hosted runner
+呼叫公開的 `/health`、`/ready`、`/metrics`。因此這不是和 Render 同一個
+process 內的 self-check；Render 無法連線、database／Redis 未就緒或 metrics
+格式消失，都會讓 workflow 失敗。
+
+每次 run 的 Summary 是最小 production dashboard，顯示：
+
+- health 與 readiness；
+- 自 deploy 以來的 HTTP request、5xx、429 counter；
+- in-flight gauge；
+- 目前累積 histogram 的 p95 bucket 上界。
+
+Workflow 失敗時會建立或更新標有 `production-alert` 的 GitHub Issue，連到
+失敗 run；後續 probe 恢復時會留言並自動關閉 Issue。這是免費作品展示的
+alert receiver，不等同 24/7 on-call、PagerDuty 或正式 SLA。GitHub schedule
+是 best-effort，Render restart 也會重設 process-local counters。
+
+手動驗證外部 monitor：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/production_monitor.py
+```
+
 ## 事故排查順序
 
 1. 呼叫 `/health`：確認 process 能回應 HTTP。
