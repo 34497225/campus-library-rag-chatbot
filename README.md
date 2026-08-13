@@ -8,6 +8,7 @@
 
 ## 線上資源
 
+- 正式前端：<https://campus-library-rag-chatbot.streamlit.app/>
 - Backend API：<https://campus-library-chatbot-api.onrender.com>
 - Swagger UI：<https://campus-library-chatbot-api.onrender.com/docs>
 - Readiness：<https://campus-library-chatbot-api.onrender.com/ready>
@@ -17,6 +18,7 @@
 - 外部 production dashboard：[GitHub Actions Production Monitor](https://github.com/34497225/campus-library-rag-chatbot/actions/workflows/production-monitor.yml)
 - 資料庫復原演練與 runbook：[docs/RECOVERY.md](docs/RECOVERY.md)
 - 面試知識整理：[INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md)
+- v1.0 驗收紀錄：[docs/RELEASE.md](docs/RELEASE.md)
 
 Render Free instance 閒置後會休眠，第一次請求可能需要等待約 50 秒或更久。
 
@@ -157,7 +159,7 @@ RATE_LIMIT_ENABLED=false
 ## 測試與品質檢查
 
 ```powershell
-# 前端與 RAG evaluation helpers：54 tests
+# 前端、RAG evaluation 與 production monitor：58 tests
 .\.venv\Scripts\python.exe -m pytest tests -q
 
 # 後端：119 tests
@@ -193,11 +195,11 @@ answer pass rate 為 94%。完整方法、逐案結果與限制見
 - JWT 只有 access token，尚未實作 refresh token、Email 驗證、忘記密碼或 OAuth。
 - Render Free instance 會休眠；正式服務應改用常駐 instance 與獨立 migration job。
 - 目前 Redis 固定視窗在視窗交界可能容許突發流量；更嚴格需求可改 sliding window 或 token bucket。
-- 後續可加入備份還原演練、Sentry／OpenTelemetry 與真正的後端 RAG pipeline。
+- 已有隔離式 Neon 復原演練與外部 production monitor；後續可加入 Sentry／OpenTelemetry、長期 metrics retention 與真正的後端 RAG pipeline。
 
 ## 履歷描述範例
 
-> 開發並部署雙語 RAG 文件客服，使用 Streamlit、LangChain、FAISS 與 OpenAI 完成 PDF／CSV 語意檢索；以 16 個雙語案例驗證 Top-3 retrieval 100% 與 grounded answer 94%；並以 FastAPI、SQLAlchemy、Alembic、Neon PostgreSQL 實作 Argon2id／JWT 身分驗證、owner-scoped 對話持久化及 Redis Lua 分散式限流，搭配 173 項自動測試與 GitHub Actions／Render 自動部署。
+> 開發並部署雙語 RAG 文件客服，使用 Streamlit、LangChain、FAISS 與 OpenAI 完成 PDF／CSV 語意檢索；以 16 個雙語案例驗證 Top-3 retrieval 100% 與 grounded answer 94%；並以 FastAPI、SQLAlchemy、Alembic、Neon PostgreSQL 實作 Argon2id／JWT 身分驗證、owner-scoped 對話持久化及 Redis Lua 分散式限流，搭配 177 項自動測試、外部 production monitor 與 GitHub Actions／Render 自動部署。
 
 ## License
 
