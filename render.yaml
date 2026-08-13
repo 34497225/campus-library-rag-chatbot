@@ -37,12 +37,11 @@ services:
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "60"
 
-      # 使用同一 Blueprint、同一區域的 Render Key Value 私有連線。
+      # 工作區的免費額度只允許一個 Key Value 實例。
+      # 因此由 Render Dashboard 安全注入既有實例的私有連線 URL，
+      # 不把連線資訊或密碼寫進 Git。
       - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: campus-library-chatbot-rate-limit
-          property: connectionString
+        sync: false
 
       - key: RATE_LIMIT_ENABLED
         value: "true"
@@ -55,11 +54,3 @@ services:
 
       - key: API_RATE_LIMIT_REQUESTS
         value: "60"
-
-  # 限流計數只需要短期 TTL，不需要磁碟持久化；免費方案已足夠展示。
-  - type: keyvalue
-    name: campus-library-chatbot-rate-limit
-    plan: free
-    region: singapore
-    ipAllowList: []
-    maxmemoryPolicy: allkeys-lru
