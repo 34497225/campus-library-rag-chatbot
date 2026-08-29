@@ -1,10 +1,8 @@
 name: Production Monitor
 
 on:
-  schedule:
-    # GitHub schedules are best-effort; fifteen minutes is enough for this
-    # free portfolio service and avoids creating unnecessary traffic.
-    - cron: "7,22,37,52 * * * *"
+  # This portfolio monitor is intentionally manual. Running it every fifteen
+  # minutes consumed most of the account's monthly GitHub Actions allowance.
   workflow_dispatch:
 
 permissions:
