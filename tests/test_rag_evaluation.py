@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from app import greeting_response, response_language_for
+from app import (
+    fallback_response,
+    greeting_response,
+    normalize_fallback_answer,
+    response_language_for,
+)
 from rag_evaluation import (
     load_cases,
     percentile,
@@ -49,6 +54,32 @@ def test_percentile_uses_nearest_rank() -> None:
 def test_response_language_is_explicit_for_supported_languages() -> None:
     assert response_language_for("這本書可以借嗎？") == "Traditional Chinese"
     assert response_language_for("Can I borrow this book?") == "English"
+
+
+def test_response_language_uses_interface_language_for_numbers_and_symbols() -> None:
+    assert response_language_for("123", "Traditional Chinese") == "Traditional Chinese"
+    assert response_language_for("123", "English") == "English"
+    assert response_language_for("?!", "Traditional Chinese") == "Traditional Chinese"
+
+
+def test_fallback_response_hands_off_to_library_staff() -> None:
+    assert "圖書館櫃台" in fallback_response("Traditional Chinese")
+    assert "service desk" in fallback_response("English")
+
+
+def test_old_model_fallback_is_normalized_to_service_desk_handoff() -> None:
+    old_answer = "抱歉，目前的資訊並未涵蓋這個問題。您可以重新表達問題。"
+
+    answer = normalize_fallback_answer(old_answer, "Traditional Chinese")
+
+    assert answer == fallback_response("Traditional Chinese")
+    assert "圖書館櫃台" in answer
+
+
+def test_normal_answer_is_not_changed_by_fallback_normalization() -> None:
+    answer = "圖書館平日開放時間為 08:30 至 21:00。"
+
+    assert normalize_fallback_answer(answer, "Traditional Chinese") == answer
 
 
 def test_greeting_detection_does_not_match_substantive_english_questions() -> None:

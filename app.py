@@ -223,10 +223,9 @@ The latest input below is a substantive question, not a greeting. Answer that
 question directly and do not replace the answer with a generic welcome message.
 
 For every other question, answer only from the supplied document context. If the
-context is insufficient, do not invent an answer and use a polite fallback in
-the user's language: explain that the available information does not cover the
-question, then invite the user to rephrase the question or ask about the
-library services in the document. Never reply with only "I don't know".
+context is insufficient, unrelated, or does not clearly answer the question, do
+not invent an answer. Return this fallback message exactly as written:
+{fallback_message}
 
 Recent conversation (may be empty):
 {history}
@@ -342,7 +341,9 @@ def format_history(messages: List[Dict[str, object]]) -> str:
     return "\n".join(lines) or "(No previous conversation.)"
 
 
-def response_language_for(question: str) -> str:
+def response_language_for(
+    question: str, default_language: str = "Traditional Chinese"
+) -> str:
     """Choose a stable response language from the user's latest question.
 
     The demo supports Traditional Chinese and English. Passing an explicit
@@ -350,8 +351,44 @@ def response_language_for(question: str) -> str:
     the model's output language.
     """
 
-    has_cjk = any("\u4e00" <= char <= "\u9fff" for char in question)
-    return "Traditional Chinese" if has_cjk else "English"
+    if any("\u4e00" <= char <= "\u9fff" for char in question):
+        return "Traditional Chinese"
+    if any(char.isalpha() for char in question):
+        return "English"
+    return (
+        default_language
+        if default_language in {"Traditional Chinese", "English"}
+        else "Traditional Chinese"
+    )
+
+
+def fallback_response(response_language: str) -> str:
+    """Return a consistent handoff message when the knowledge base is insufficient."""
+
+    if response_language == "English":
+        return (
+            "I'm sorry, but customer service cannot confirm this from the available "
+            "information. Please contact the library service desk for assistance."
+        )
+    return "很抱歉，目前客服無法從現有資料確認這個問題。請洽詢圖書館櫃台，由服務人員協助您。"
+
+
+def normalize_fallback_answer(answer: str, response_language: str) -> str:
+    """Replace model-generated out-of-scope wording with the approved handoff."""
+
+    normalized = answer.casefold()
+    fallback_markers = (
+        "資訊並未涵蓋",
+        "資訊未涵蓋",
+        "資料並未涵蓋",
+        "資料未涵蓋",
+        "重新表達問題",
+        "available information does not cover",
+        "rephrase your question",
+    )
+    if any(marker.casefold() in normalized for marker in fallback_markers):
+        return fallback_response(response_language)
+    return answer
 
 
 def greeting_response(question: str) -> str | None:
@@ -366,16 +403,26 @@ def greeting_response(question: str) -> str | None:
 
 
 def answer_question(
-    vector_store: FAISS, question: str, messages: List[Dict[str, object]]
+    vector_store: FAISS,
+    question: str,
+    messages: List[Dict[str, object]],
+    default_response_language: str = "Traditional Chinese",
 ) -> Tuple[str, List[Document], int]:
     greeting = greeting_response(question)
     if greeting is not None:
         return greeting, [], 0
 
     sources = vector_store.similarity_search(question, k=3)
+    response_language = response_language_for(question, default_response_language)
     prompt = PromptTemplate(
         template=PROMPT_TEMPLATE,
-        input_variables=["context", "question", "history", "response_language"],
+        input_variables=[
+            "context",
+            "question",
+            "history",
+            "response_language",
+            "fallback_message",
+        ],
     )
     model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
     chain = load_qa_chain(
@@ -390,9 +437,14 @@ def answer_question(
             input_documents=sources,
             question=question,
             history=format_history(messages),
-            response_language=response_language_for(question),
+            response_language=response_language,
+            fallback_message=fallback_response(response_language),
         )
-    return answer, sources, callback.total_tokens
+    return (
+        normalize_fallback_answer(answer, response_language),
+        sources,
+        callback.total_tokens,
+    )
 
 
 def conversation_markdown(messages: List[Dict[str, object]], source_name: str) -> str:
@@ -1042,7 +1094,10 @@ def main() -> None:
             with st.chat_message("assistant"):
                 with st.spinner(t(language, "asking")):
                     answer, _sources, used_tokens = answer_question(
-                        st.session_state.vector_store, question, st.session_state.messages[:-1]
+                        st.session_state.vector_store,
+                        question,
+                        st.session_state.messages[:-1],
+                        "Traditional Chinese" if language == "zh" else "English",
                     )
                 st.markdown(answer)
             st.session_state.messages.append(
